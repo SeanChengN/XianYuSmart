@@ -79,6 +79,7 @@ const save = async () => {
     amount: form.amount,
     stock: form.stock,
     data: {
+      stock: form.stock,
       sourceUrl: form.sourceUrl,
       description: form.description,
       images: form.imagesText.split('\n').map(value => value.trim()).filter(Boolean)
@@ -128,7 +129,7 @@ onMounted(load)
           <h3>{{ item.name }}</h3>
           <div class="workbench__tags">
             <span class="workbench__tag">{{ item.data?.priceSource === 'SEARCH_DISPLAY' || (!item.data?.competitorSnapshot?.capturedAt && item.data?.detailStatus === 'SEARCH_FALLBACK') ? '搜索展示价' : '参考展示价' }} ¥ {{ formatMoneyCents(displayPriceCents(item.amount)) }}</span>
-            <span class="workbench__tag">库存 {{ item.stock }}</span>
+            <span class="workbench__tag">{{ item.stock === 0 && item.data?.stock == null ? '库存：未提供' : `库存 ${item.stock}` }}</span>
             <span class="workbench__tag" :class="{ 'workbench__tag--good': item.data?.images?.length }">{{ item.data?.images?.length ? `${item.data.images.length} 张图` : '待补图片' }}</span>
             <span v-if="item.xyGoodsId" class="workbench__tag">ID {{ item.xyGoodsId }}</span>
           </div>

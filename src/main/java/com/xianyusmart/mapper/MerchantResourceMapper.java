@@ -17,6 +17,14 @@ import java.util.Map;
 @Mapper
 public interface MerchantResourceMapper extends BaseMapper<MerchantResource> {
 
+    // Serialize direct additions for the tenant, including across app instances.
+    @Select("SELECT id FROM sys_user WHERE id = #{tenantId} FOR UPDATE")
+    Long lockSupplyTenant(@Param("tenantId") Long tenantId);
+
+    // A current read after the tenant lock avoids an earlier repeatable-read snapshot.
+    @Select("SELECT * FROM merchant_resource WHERE tenant_id = #{tenantId} AND resource_type = 'SUPPLY' AND xy_goods_id = #{goodsId} LIMIT 1 FOR UPDATE")
+    MerchantResource selectSupplyForAddition(@Param("tenantId") Long tenantId, @Param("goodsId") String goodsId);
+
     @Select("<script>SELECT * FROM merchant_resource WHERE resource_type = #{type} " +
             "<if test='status != null'>AND status = #{status}</if> ORDER BY updated_time DESC</script>")
     List<MerchantResource> selectByType(@Param("type") String type, @Param("status") Integer status);

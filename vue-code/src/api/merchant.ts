@@ -51,6 +51,8 @@ export function getCompetitorDetail(data: {
 
 export interface OpportunityCandidate {
   itemId: string
+  soldCountText?: string | null
+  wantCountText?: string | null
   title: string
   sourceUrl: string
   description?: string
@@ -215,6 +217,12 @@ export function crawlShopOpportunities(data: {
   limit?: number
 }) {
   return request<OpportunitySearchPage>({ url: '/merchant/opportunities/shop', method: 'POST', data })
+}
+
+export function addOpportunitiesToSupply(data: { candidates: OpportunityCandidate[]; xianyuAccountId: number }) {
+  return request<{ addedCount: number; existingCount: number; items: Array<{ itemId: string; supplyId: string | number; status: 'ADDED' | 'EXISTS' }> }>({
+    url: '/merchant/opportunities/supply', method: 'POST', data
+  })
 }
 
 export function importOpportunities(data: { candidates: OpportunityCandidate[]; xianyuAccountId?: number }) {

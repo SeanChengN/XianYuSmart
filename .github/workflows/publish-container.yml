@@ -8,7 +8,7 @@ on:
       tag:
         description: Git tag to publish
         required: true
-        default: v2.0.7
+        default: v2.1.0
 
 permissions:
   contents: read
@@ -16,7 +16,6 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: evvvvvvvan/xianyusmart
 
 jobs:
   publish:
@@ -43,6 +42,7 @@ jobs:
         shell: bash
         run: |
           TAG="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.event.release.tag_name }}"
+          echo "name=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
@@ -53,8 +53,8 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.image.outputs.tag }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:${{ steps.image.outputs.tag }}
+            ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:latest
           labels: |
             org.opencontainers.image.title=XianYuSmart
             org.opencontainers.image.description=多租户闲鱼虚拟商品运营平台

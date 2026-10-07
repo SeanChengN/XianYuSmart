@@ -76,6 +76,7 @@ class PlatformMarketplaceParser {
             item.put("price", price);
             item.put("displayPrice", price);
             item.put("priceSource", "SEARCH_DISPLAY");
+            putProductStatistics(item, exContent, card, map(record.get("data")));
             item.put("images", image.isBlank() ? List.of() : List.of(https(image)));
             item.put("sellerNick", firstNonBlank(
                     firstText(detailParams, "userNick", "userNickName", "nickname"),
@@ -143,6 +144,7 @@ class PlatformMarketplaceParser {
                     firstText(cardData, "price", "soldPrice")));
             item.put("displayPrice", item.get("price"));
             item.put("priceSource", "SEARCH_DISPLAY");
+            putProductStatistics(item, cardData, map(cardData.get("exContent")));
             item.put("images", image.isBlank() ? List.of() : List.of(https(image)));
             result.add(item);
             if (result.size() >= limit) {
@@ -187,6 +189,31 @@ class PlatformMarketplaceParser {
         }
         putSellerFacts(result, seller);
         return result;
+    }
+
+    @SafeVarargs
+    private final void putProductStatistics(Map<String, Object> target, Map<String, Object>... sources) {
+        target.put("soldCountText", null);
+        target.put("wantCountText", null);
+        // Official product-card display labels only. Seller totals and tracking wantNum are unrelated.
+        String count = "(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?(?:万|亿|千)?\\+?";
+        for (Map<String, Object> source : sources) {
+            Object tags = map(map(source.get("fishTags")).get("r3")).get("tagList");
+            if (!(tags instanceof List<?> list)) continue;
+            for (Object entry : list) {
+                Map<String, Object> tag = map(map(entry).get("data"));
+                Object content = tag.get("content");
+                if (!(content instanceof String label)) continue;
+                String type = text(tag.get("type"));
+                if (!type.isBlank() && !Set.of("text", "gradientImageText").contains(type)) continue;
+                if (target.get("soldCountText") == null && label.trim().matches("已售\\s*" + count + "(?:件|个|单)?")) {
+                    target.put("soldCountText", label);
+                }
+                if (target.get("wantCountText") == null && label.trim().matches(count + "\\s*人想要")) {
+                    target.put("wantCountText", label);
+                }
+            }
+        }
     }
 
     private void putSellerFacts(Map<String, Object> target, Object source) {

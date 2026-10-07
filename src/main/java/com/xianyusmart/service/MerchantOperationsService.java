@@ -339,6 +339,51 @@ public class MerchantOperationsService {
     }
 
     @Transactional
+    public Map<String, Object> addOpportunitiesToSupply(Map<String, Object> request) {
+        Long accountId = longValue(request.get("xianyuAccountId"));
+        if (accountId == null) throw new IllegalArgumentException("请选择入库账号");
+        validateOwnedAccount(accountId);
+        if (!(request.get("candidates") instanceof List<?> candidates) || candidates.isEmpty() || candidates.size() > 50)
+            throw new IllegalArgumentException("请选择 1 至 50 个候选商品");
+        // Validate the complete batch before writing anything.
+        List<Map<String, Object>> facts = new ArrayList<>();
+        for (Object value : candidates) {
+            if (!(value instanceof Map<?, ?> input)) throw new IllegalArgumentException("候选商品格式无效");
+            Map<String, Object> candidate = new LinkedHashMap<>();
+            for (String key : List.of("itemId", "title", "description", "price", "images", "sellerId", "sellerNick",
+                    "sellerAvatar", "soldCountText", "wantCountText", "opportunityScore", "riskLevel", "matchReason")) {
+                if (input.get(key) != null) candidate.put(key, input.get(key));
+            }
+            if (!text(candidate.get("itemId")).matches("\\d{8,64}")) throw new IllegalArgumentException("商品ID格式无效");
+            facts.add(CompetitorSnapshots.untrustedCandidate(candidate));
+        }
+        Long tenantId = requireTenantId();
+        resourceMapper.lockSupplyTenant(tenantId);
+        Map<String, MerchantResource> batch = new LinkedHashMap<>();
+        List<Map<String, Object>> items = new ArrayList<>();
+        int added = 0;
+        for (Map<String, Object> candidate : facts) {
+            String itemId = text(candidate.get("itemId"));
+            MerchantResource supply = batch.get(itemId);
+            if (supply == null) supply = resourceMapper.selectSupplyForAddition(tenantId, itemId);
+            boolean exists = supply != null;
+            if (!exists) {
+                Map<String, Object> cached = platformPublishService.cachedCompetitorDetail(accountId, itemId);
+                candidate.put("detailStatus", "SEARCH_ONLY");
+                if (cached != null && cached.get(CompetitorDetailService.SNAPSHOT_KEY) != null) {
+                    candidate.put(CompetitorDetailService.SNAPSHOT_KEY, cached.get(CompetitorDetailService.SNAPSHOT_KEY));
+                    candidate.put("detailStatus", cached.getOrDefault("detailStatus", "SUCCESS"));
+                }
+                supply = createSupply(candidate, accountId, true);
+                added++;
+            }
+            batch.put(itemId, supply);
+            items.add(Map.of("itemId", itemId, "supplyId", supply.getId(), "status", exists ? "EXISTS" : "ADDED"));
+        }
+        return Map.of("addedCount", added, "existingCount", items.size() - added, "items", items);
+    }
+
+    @Transactional
     public List<MerchantResourceRespDTO> importOpportunities(Map<String, Object> request) {
         Long accountId = longValue(request.get("xianyuAccountId"));
         if (accountId == null) throw new IllegalArgumentException("请选择用于采集的账号");
@@ -1161,6 +1206,10 @@ public class MerchantOperationsService {
     }
 
     private MerchantResource createSupply(Map<String, Object> candidate, Long accountId) {
+        return createSupply(candidate, accountId, false);
+    }
+
+    private MerchantResource createSupply(Map<String, Object> candidate, Long accountId, boolean unknownStock) {
         MerchantResource supply = new MerchantResource();
         supply.setTenantId(requireTenantId());
         supply.setResourceType("SUPPLY");
@@ -1168,7 +1217,8 @@ public class MerchantOperationsService {
         supply.setStatus(1);
         supply.setXianyuAccountId(accountId);
         supply.setXyGoodsId(blankToNull(text(candidate.get("itemId"))));
-        supply.setStock(Math.max(0, intValue(candidate.get("stock"), 1)));
+        // Required resource field uses zero when unavailable; JSON does not invent stock.
+        supply.setStock(unknownStock ? 0 : Math.max(0, intValue(candidate.get("stock"), 1)));
         Object price = candidate.get("price") == null ? candidate.get("amount") : candidate.get("price");
         supply.setAmount(decimalValue(price, BigDecimal.ZERO));
         supply.setDataJson(writeJson(candidate));

@@ -42,6 +42,54 @@ class CompetitorOperationsTest {
     @AfterEach void cleanup(){UserContext.clear();}
     void ownedAccount() {var account = new XianyuAccount(); account.setTenantId(1L); when(accounts.selectById(2L)).thenReturn(account);}
 
+    @Test void directAdditionSkipsExistingAcrossAccountsAndNeverOverwrites() {
+        ownedAccount(); supply.setXianyuAccountId(3L);
+        String old = supply.getDataJson();
+        when(resources.selectSupplyForAddition(1L,item)).thenReturn(supply);
+        var result = service.addOpportunitiesToSupply(Map.of("xianyuAccountId",2L,"candidates",List.of(Map.of("itemId",item,"title","forged"))));
+        assertEquals(0,result.get("addedCount")); assertEquals(1,result.get("existingCount"));
+        assertEquals(old,supply.getDataJson()); assertEquals(3L,supply.getXianyuAccountId());
+        verify(resources,never()).updateById(any()); verify(resources,never()).insert(any(MerchantResource.class));
+        verifyNoInteractions(platform);
+    }
+
+    @Test void directAdditionUsesOnlyServerCacheAndDeduplicatesBatch() throws Exception {
+        ownedAccount();
+        when(platform.cachedCompetitorDetail(2L,item)).thenReturn(Map.of("competitorSnapshot",snapshot,"detailStatus","ORDER_PREVIEW"));
+        final List<MerchantResource> inserted = new ArrayList<>();
+        doAnswer(call -> {MerchantResource row=call.getArgument(0);row.setId(42L);inserted.add(row);return 1;}).when(resources).insert(any(MerchantResource.class));
+        var input=Map.of("itemId",item,"title","search","price","12.70","stock",999,"competitorSnapshot",Map.of("capturedAt","forged"));
+        var result=service.addOpportunitiesToSupply(Map.of("xianyuAccountId",2L,"candidates",List.of(input,input)));
+        assertEquals(1,result.get("addedCount"));assertEquals(1,result.get("existingCount"));
+        assertEquals(1,inserted.size());assertEquals(0,inserted.get(0).getStock());
+        var data=json.readTree(inserted.get(0).getDataJson());
+        assertFalse(data.has("stock")); assertEquals("SEARCH_DISPLAY",data.path("priceSource").asText());
+        assertEquals("2026-10-01T00:00:00Z",data.path("competitorSnapshot").path("capturedAt").asText());
+        verify(platform).cachedCompetitorDetail(2L,item);verifyNoMoreInteractions(platform);
+        verify(resources).lockSupplyTenant(1L);
+    }
+
+    @Test void directAdditionWithoutCacheDiscardsForgedSnapshot() throws Exception {
+        ownedAccount();
+        doAnswer(call -> {((MerchantResource)call.getArgument(0)).setId(42L);return 1;}).when(resources).insert(any(MerchantResource.class));
+        service.addOpportunitiesToSupply(Map.of("xianyuAccountId",2L,"candidates",List.of(Map.of("itemId",item,"competitorSnapshot",snapshot,"skuList",List.of("forged")))));
+        var capture=org.mockito.ArgumentCaptor.forClass(MerchantResource.class);verify(resources).insert(capture.capture());
+        var data=json.readTree(capture.getValue().getDataJson());
+        assertFalse(data.has("competitorSnapshot"));assertFalse(data.has("skuList"));
+        assertEquals("SEARCH_ONLY",data.path("detailStatus").asText());
+        verify(platform).cachedCompetitorDetail(2L,item);verifyNoMoreInteractions(platform);
+    }
+
+    @Test void directAdditionRejectsInvalidBatchBeforeWritingAndForeignAccount() {
+        ownedAccount();
+        assertThrows(IllegalArgumentException.class,()->service.addOpportunitiesToSupply(Map.of("xianyuAccountId",2L,"candidates",Collections.nCopies(51,Map.of("itemId",item)))));
+        assertThrows(IllegalArgumentException.class,()->service.addOpportunitiesToSupply(Map.of("xianyuAccountId",2L,"candidates",List.of(Map.of("itemId",item),Map.of("itemId","bad")))));
+        assertThrows(IllegalArgumentException.class,()->service.addOpportunitiesToSupply(Map.of("xianyuAccountId",2L,"candidates",List.of())));
+        var foreign=new XianyuAccount();foreign.setTenantId(3L);when(accounts.selectById(9L)).thenReturn(foreign);
+        assertThrows(IllegalArgumentException.class,()->service.addOpportunitiesToSupply(Map.of("xianyuAccountId",9L,"candidates",List.of(Map.of("itemId",item)))));
+        verifyNoInteractions(resources,platform);
+    }
+
     @Test void importStopsBatchOnValidationAndPreservesPriorFacts() throws Exception {
         ownedAccount();
         when(resources.selectByTenantTypeAndGoodsId(1L,"SUPPLY",item)).thenReturn(supply);

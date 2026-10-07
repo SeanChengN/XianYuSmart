@@ -126,6 +126,20 @@ public class CompetitorDetailService {
         } finally { inFlight.remove(key, owner); }
     }
 
+    /** Cache-only read: never performs authentication, pacing or marketplace requests. */
+    public Map<String, Object> cached(Long accountId, String itemId) {
+        Long tenantId = TenantContext.get();
+        if (tenantId == null || accountId == null || itemId == null || !itemId.matches("\\d{8,64}"))
+            throw new IllegalArgumentException("账号或商品ID无效");
+        XianyuAccount account = accountMapper.selectById(accountId);
+        if (account == null || !tenantId.equals(account.getTenantId()))
+            throw new IllegalArgumentException("采集账号不存在或无权访问");
+        synchronized (cache) {
+            Entry entry = cache.get(new Key(tenantId, accountId, itemId));
+            return entry != null && entry.expiresAt > clock.millis() ? new LinkedHashMap<>(entry.data) : Map.of();
+        }
+    }
+
     public void assertAllowed(Long accountId) {
         RiskControlService.GuardStatus status = risk.getStatus(accountId);
         if (status != null && status.state() == RiskControlService.GuardState.CIRCUIT_OPEN) {

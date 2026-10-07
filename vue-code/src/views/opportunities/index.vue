@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { getAccountList } from '@/api/account'
-import { createPublishPlan, crawlShopOpportunities, generateOpportunityImage, importOpportunities, polishOpportunity, searchOpportunities, type OpportunityCandidate } from '@/api/merchant'
+import { addOpportunitiesToSupply, createPublishPlan, crawlShopOpportunities, generateOpportunityImage, importOpportunities, polishOpportunity, searchOpportunities, type OpportunityCandidate } from '@/api/merchant'
 import PublishAddressFields from '@/components/PublishAddressFields.vue'
 import type { PublishAddress } from '@/data/publish-address'
 import type { Account } from '@/types'
@@ -9,6 +9,16 @@ import { toast } from '@/utils/toast'
 import '@/styles/merchant-workbench.css'
 import CompetitorSkuPanel from '@/components/CompetitorSkuPanel.vue'
 import { displayPriceCents, formatMoneyCents } from '@/utils/competitor-price'
+import ProductReferenceStats from '@/components/ProductReferenceStats.vue'
+import { searchCache, type SearchResultState } from '@/utils/search-cache'
+import { getAuthUsername } from '@/utils/request'
+import { filterSearchResults, validWantMinimum, type ResultSort } from '@/utils/search-result-filter'
+import { hasPermission } from '@/utils/permission'
+
+const minWantCount = ref<number | ''>('')
+const addingSupply = ref(false)
+const canAddSupply = computed(() => hasPermission('action:operations-write'))
+
 
 const accounts = ref<Account[]>([])
 const accountId = ref<number>()
@@ -26,7 +36,13 @@ const searched = ref(false)
 const pageNumber = ref(1)
 const hasMore = ref(false)
 const total = ref(0)
-const draft = reactive({
+const fetchedAt = ref('')
+const cacheWarning = ref(false)
+const owner = getAuthUsername()
+let mounted = true
+let restoring = false
+let savedSearch: SearchResultState | undefined
+const emptyDraft = () => ({
   name: '',
   description: '',
   amount: '' as number | '',
@@ -42,8 +58,16 @@ const draft = reactive({
   deliveryMethod: '线上交付',
   images: [] as string[]
 })
+const draft = reactive(emptyDraft())
 
-const selectedCandidates = computed(() => results.value.filter(item => selectedIds.value.includes(item.itemId)))
+const sortMode = ref<ResultSort>('relevance')
+const filteredResults = computed(() => filterSearchResults(results.value, minWantCount.value, sortMode.value))
+watch(filteredResults, visible => {
+  const ids = new Set(visible.map(item => item.itemId))
+  selectedIds.value = selectedIds.value.filter(id => ids.has(id))
+  if (step.value === 1 && active.value && !ids.has(active.value.itemId)) active.value = undefined
+}, { flush: 'sync' })
+const selectedCandidates = computed(() => filteredResults.value.filter(item => selectedIds.value.includes(item.itemId)))
 const publishAddress = computed<PublishAddress>({
   get: () => ({
     province: draft.province,
@@ -59,8 +83,11 @@ const publishAddress = computed<PublishAddress>({
 
 const loadAccounts = async () => {
   const response = await getAccountList()
+  if (!mounted || owner !== getAuthUsername()) return
   accounts.value = response.data?.accounts || []
-  accountId.value ||= accounts.value[0]?.id
+  cacheWarning.value = !searchCache.pruneAccounts(owner, accounts.value.map(account => account.id))
+  const last = searchCache.lastAccount(owner, 'opportunities')
+  accountId.value = accounts.value.find(account => String(account.id) === last)?.id || accounts.value[0]?.id
 }
 
 let searchGeneration = 0
@@ -78,23 +105,73 @@ const resetResults = () => {
   pageNumber.value = 1
   hasMore.value = false
   total.value = 0
+  fetchedAt.value = ''
+  savedSearch = undefined
 }
 
 watch(accountId, () => {
+  restoring = true
   resetResults()
   loading.value = false
   loadingMore.value = false
   step.value = 1
   maxStep.value = 1
-  draft.amount = ''
-  draft.stock = ''
-})
+  Object.assign(draft, emptyDraft())
+  sourceMode.value = 'keyword'
+  keyword.value = ''
+  shopUrl.value = ''
+  minWantCount.value = ''
+  sortMode.value = 'relevance'
+  if (accountId.value && accounts.value.some(account => String(account.id) === String(accountId.value))) {
+    cacheWarning.value = !searchCache.selectAccount(owner, 'opportunities', accountId.value, accounts.value.map(account => account.id))
+    savedSearch = searchCache.read(owner, 'opportunities', accountId.value)
+    if (savedSearch) {
+      sortMode.value = savedSearch.sortMode || 'relevance'
+      sourceMode.value = savedSearch.sourceMode || 'keyword'
+      minWantCount.value = savedSearch.minWantCount ?? ''
+      keyword.value = savedSearch.keyword
+      shopUrl.value = savedSearch.shopUrl || ''
+      results.value = savedSearch.results
+      pageNumber.value = savedSearch.pageNumber
+      hasMore.value = savedSearch.hasMore
+      total.value = savedSearch.total
+      fetchedAt.value = savedSearch.fetchedAt
+      searched.value = true
+    }
+  }
+  restoring = false
+}, { flush: 'sync' })
+
+const persistResults = () => {
+  if (restoring || !mounted || owner !== getAuthUsername() || !accountId.value || !savedSearch) return
+  cacheWarning.value = !searchCache.save(owner, 'opportunities', accountId.value, { ...savedSearch, results: results.value, minWantCount: validWantMinimum(minWantCount.value) ? minWantCount.value : '', sortMode: sortMode.value })
+}
+watch([sourceMode, keyword, shopUrl], () => {
+  if (restoring) return
+  searchGeneration++
+  loading.value = false
+  loadingMore.value = false
+}, { flush: 'sync' })
+watch(results, persistResults, { deep: true })
+watch([minWantCount, sortMode], persistResults, { flush: 'sync' })
+const clearResults = () => {
+  resetResults()
+  loading.value = false
+  loadingMore.value = false
+  if (accountId.value) cacheWarning.value = !searchCache.remove(owner, 'opportunities', accountId.value)
+}
+onBeforeUnmount(() => { mounted = false; searchGeneration++; captureGeneration++ })
 
 const search = async (append = false) => {
   if (sourceMode.value === 'keyword' && !keyword.value.trim()) return toast.error('请输入商品关键词')
   if (sourceMode.value === 'shop' && !shopUrl.value.trim()) return toast.error('请输入闲鱼店铺链接')
   if (!accountId.value) return toast.error('请选择搜索账号')
+  if (append && (!savedSearch || savedSearch.sourceMode !== sourceMode.value
+    || savedSearch.keyword !== keyword.value || savedSearch.shopUrl !== shopUrl.value)) {
+    return toast.warning('搜索条件已改变，请先开始新的搜索')
+  }
   const current = ++searchGeneration
+  const query = { sourceMode: sourceMode.value, keyword: keyword.value, shopUrl: shopUrl.value }
   if (append) loadingMore.value = true
   else loading.value = true
   try {
@@ -103,7 +180,7 @@ const search = async (append = false) => {
     const response = sourceMode.value === 'keyword'
       ? await searchOpportunities({ ...common, keyword: keyword.value })
       : await crawlShopOpportunities({ ...common, shopUrl: shopUrl.value })
-    if (current !== searchGeneration) return
+    if (current !== searchGeneration || !mounted || owner !== getAuthUsername()) return
     const page = response.data
     const pageItems = page?.items || []
     results.value = append
@@ -113,11 +190,16 @@ const search = async (append = false) => {
     hasMore.value = Boolean(page?.hasMore)
     total.value = Number(page?.total || results.value.length)
     searched.value = true
+    fetchedAt.value = new Date().toISOString()
+    savedSearch = { ...query, results: results.value, pageNumber: pageNumber.value,
+      hasMore: hasMore.value, total: total.value, fetchedAt: fetchedAt.value }
+    persistResults()
     if (!append) {
       selectedIds.value = []
-      active.value = results.value[0]
+      active.value = filteredResults.value[0]
     }
-  } finally {
+  } catch { /* Request utility displays the error; keep the last successful results. */ }
+  finally {
     if (current === searchGeneration) {
       loading.value = false
       loadingMore.value = false
@@ -132,8 +214,22 @@ const toggle = (item: OpportunityCandidate) => {
     : [...selectedIds.value, item.itemId]
 }
 
+const addSupply = async () => {
+  if (addingSupply.value || capturing.value || !accountId.value || !canAddSupply.value) return
+  const candidates = [...selectedCandidates.value]
+  if (!candidates.length || candidates.length > 50) return toast.warning('请选择 1 至 50 件商品')
+  const current = searchGeneration, selectedAccount = accountId.value
+  addingSupply.value = true
+  try {
+    const response = await addOpportunitiesToSupply({ candidates, xianyuAccountId: selectedAccount })
+    if (mounted && current === searchGeneration && selectedAccount === accountId.value && owner === getAuthUsername() && response.data)
+      toast.success(`新增 ${response.data.addedCount} 件，已有 ${response.data.existingCount} 件`)
+  } catch { /* Request utility displays failures; keep selections and results. */ }
+  finally { addingSupply.value = false }
+}
+
 const capture = async () => {
-  if (capturing.value || !accountId.value) return
+  if (capturing.value || addingSupply.value || !accountId.value) return
   if (!selectedCandidates.value.length) return toast.error('至少选择一个候选商品')
   const candidates = [...selectedCandidates.value]
   const item = candidates[0]!
@@ -141,9 +237,9 @@ const capture = async () => {
   capturing.value = true
   try {
     const response = await importOpportunities({ candidates, xianyuAccountId: accountId.value })
-    if (current !== captureGeneration) return
+    if (current !== captureGeneration || !mounted || owner !== getAuthUsername()) return
     const collected: Record<string, any> = response.data?.[0]?.data || item
-    item.competitorSnapshot = collected.competitorSnapshot
+    if (collected.competitorSnapshot) item.competitorSnapshot = collected.competitorSnapshot
     active.value = item
     draft.name = String(collected.title || item.title)
     draft.description = String(collected.description || collected.title || item.title)
@@ -241,7 +337,7 @@ onMounted(loadAccounts)
           <select v-model="accountId" class="workbench__select opportunity__account">
             <option v-for="account in accounts" :key="account.id" :value="account.id">{{ account.accountNote || account.unb }}</option>
           </select>
-          <select v-model="sourceMode" class="workbench__select opportunity__mode" @change="resetResults">
+          <select v-model="sourceMode" class="workbench__select opportunity__mode">
             <option value="keyword">商品搜索</option>
             <option value="shop">店铺采集</option>
           </select>
@@ -249,11 +345,23 @@ onMounted(loadAccounts)
           <input v-else v-model="shopUrl" class="workbench__input" placeholder="粘贴闲鱼网页版店铺主页完整链接" @keyup.enter="search(false)">
           <button class="workbench__btn workbench__btn--primary" :disabled="loading" @click="search(false)">{{ loading ? '搜索中' : '开始搜索' }}</button>
         </div>
-        <div v-if="searched" class="opportunity__result-meta">
-          {{ total > 0 ? `平台共匹配 ${total} 件，` : '' }}当前已加载 {{ results.length }} 件
+        <div class="workbench__card opportunity__filters">
+          <label class="workbench__field">最低想要人数<input v-model.number="minWantCount" class="workbench__input" type="number" min="0" step="1" placeholder="不限"></label>
+          <label class="workbench__field">排序<select v-model="sortMode" class="workbench__select">
+            <option value="relevance">综合匹配</option><option value="price-asc">价格从低到高</option><option value="price-desc">价格从高到低</option>
+            <option value="want-asc">想要人数从少到多</option><option value="want-desc">想要人数从多到少</option>
+          </select></label>
+          <button class="workbench__btn" @click="minWantCount = ''; sortMode = 'relevance'">重置筛选</button>
         </div>
+        <div v-if="searched" class="opportunity__result-meta">
+          <span>{{ total > 0 ? `平台共匹配 ${total} 件，` : '' }}当前已加载 {{ results.length }} 件，筛选后 {{ filteredResults.length }} 件 · 结果获取时间 {{ new Date(fetchedAt).toLocaleString('zh-CN') }}</span>
+          <button class="workbench__btn" @click="clearResults">清空搜索结果</button>
+        </div>
+        <p class="search-filter-note">筛选和排序仅作用于已加载结果，不会自动搜索或加载下一页。</p>
+        <p v-if="!validWantMinimum(minWantCount)" class="search-cache-warning">最低想要人数请输入非负整数。</p>
+        <p v-if="cacheWarning" class="search-cache-warning">浏览器无法保存搜索结果，当前页面仍会保留；刷新后可能丢失。</p>
         <div class="workbench__list workbench__section">
-          <article v-for="item in results" :key="item.itemId" class="workbench__item opportunity__result" :class="{ 'opportunity__result--active': active?.itemId === item.itemId }" tabindex="0" @click="toggle(item)" @keydown.enter="toggle(item)">
+          <article v-for="item in filteredResults" :key="item.itemId" class="workbench__item opportunity__result" :class="{ 'opportunity__result--active': active?.itemId === item.itemId }" tabindex="0" @click="toggle(item)" @keydown.enter="toggle(item)">
             <input type="checkbox" :checked="selectedIds.includes(item.itemId)" @click.stop="toggle(item)">
             <img :src="item.images?.[0]" alt="">
             <div class="opportunity__result-copy">
@@ -263,10 +371,11 @@ onMounted(loadAccounts)
                 <span class="workbench__tag" :class="{ 'workbench__tag--warn': item.riskLevel !== 'LOW' }">{{ item.riskLevel === 'LOW' ? '资料完整' : '建议复核' }}</span>
                 <span class="workbench__tag">{{ item.matchReason }}</span>
               </div>
+              <ProductReferenceStats :sold-count-text="item.soldCountText" :want-count-text="item.wantCountText" />
             </div>
             <strong>¥ {{ formatMoneyCents(displayPriceCents(item.price)) }}<small>搜索展示价</small></strong>
           </article>
-          <div v-if="!results.length" class="workbench__empty">{{ searched ? '平台未返回可用商品，请检查输入内容、账号状态或平台验证。' : '选择商品搜索或店铺采集后开始发现候选商品。' }}</div>
+          <div v-if="!filteredResults.length" class="workbench__empty">{{ results.length ? '当前筛选条件下没有结果，请调整筛选。' : searched ? '平台未返回可用商品，请检查输入内容、账号状态或平台验证。' : '选择商品搜索或店铺采集后开始发现候选商品。' }}</div>
           <button v-if="hasMore" class="workbench__btn opportunity__more" :disabled="loadingMore" @click="search(true)">{{ loadingMore ? '加载中' : '加载更多平台商品' }}</button>
         </div>
       </div>
@@ -280,7 +389,9 @@ onMounted(loadAccounts)
             @loaded="detail => { if (active?.itemId === detail.itemId) active.competitorSnapshot = detail.competitorSnapshot }" />
         </template>
         <div v-else class="workbench__empty">选择商品后查看预览</div>
-        <button class="workbench__btn workbench__btn--primary" :disabled="!selectedIds.length || capturing" @click="capture">{{ capturing ? '采集中…' : '下一步：整理商品' }}</button>
+        <p>已选择 {{ selectedIds.length }} 件（单次最多 50 件）</p>
+        <button v-if="canAddSupply" class="workbench__btn" :disabled="!selectedIds.length || selectedIds.length > 50 || addingSupply || capturing" @click="addSupply">{{ addingSupply ? '入库中…' : '加入货源库' }}</button>
+        <button class="workbench__btn workbench__btn--primary" :disabled="!selectedIds.length || selectedIds.length > 50 || capturing || addingSupply" @click="capture">{{ capturing ? '采集中…' : '下一步：整理商品' }}</button>
       </aside>
     </div>
 
@@ -337,11 +448,16 @@ onMounted(loadAccounts)
 </template>
 
 <style scoped>
+.opportunity__filters { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin-top: 12px; }
+.opportunity__filters .workbench__field { flex: 1; min-width: 180px; }
+.search-filter-note { color: #667085; font-size: 12px; }
+.opportunity__preview > button + button { margin-top: 8px; }
 .opportunity__layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 14px; }
 .opportunity__account { max-width: 180px; }
 .opportunity__mode { max-width: 130px; }
 .opportunity__search-pane { min-width: 0; }
-.opportunity__result-meta { margin: 12px 0 -4px; color: #667085; font-size: 12px; }
+.opportunity__result-meta { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin: 12px 0 -4px; color: #667085; font-size: 12px; }
+.search-cache-warning { color: #b54708; font-size: 12px; }
 .opportunity__result { width: 100%; min-width: 0; grid-template-columns: auto 56px minmax(0, 1fr) auto; color: inherit; text-align: left; cursor: pointer; }
 .opportunity__result-copy { min-width: 0; }
 .opportunity__result > strong { white-space: nowrap; }

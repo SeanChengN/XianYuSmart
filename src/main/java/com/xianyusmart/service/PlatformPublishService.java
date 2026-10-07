@@ -272,6 +272,10 @@ public class PlatformPublishService {
         return competitorDetails.fetch(accountId, itemId, false);
     }
 
+    public Map<String, Object> cachedCompetitorDetail(Long accountId, String itemId) {
+        return competitorDetails.cached(accountId, itemId);
+    }
+
     public Map<String, Object> competitorDetail(Long accountId, String itemId, boolean forceRefresh) {
         return competitorDetails.fetch(accountId, itemId, forceRefresh);
     }

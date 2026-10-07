@@ -4,7 +4,7 @@
 
 [![Stars](https://img.shields.io/github/stars/Evvvvvvvan/XianYuSmart?style=flat&color=2f6f5e)](https://github.com/Evvvvvvvan/XianYuSmart/stargazers)
 [![Forks](https://img.shields.io/github/forks/Evvvvvvvan/XianYuSmart?style=flat&color=2f6f5e)](https://github.com/Evvvvvvvan/XianYuSmart/forks)
-[![Release](https://img.shields.io/github/v/release/Evvvvvvvan/XianYuSmart?display_name=tag&color=2f6f5e)](https://github.com/Evvvvvvvan/XianYuSmart/releases/latest)
+[![Release](https://img.shields.io/github/v/release/SeanChengN/XianYuSmart?display_name=tag&color=2f6f5e)](https://github.com/SeanChengN/XianYuSmart/releases/latest)
 [![Star History](https://img.shields.io/badge/Star%20History-View%20Growth-2f6f5e)](#star-history)
 [![Java 21](https://img.shields.io/badge/Java-21-2f6f5e)](https://www.oracle.com/java/technologies/downloads/#java21)
 [![Spring Boot 3.5](https://img.shields.io/badge/Spring%20Boot-3.5-2f6f5e)](https://spring.io/projects/spring-boot)
@@ -18,7 +18,7 @@ XianYuSmart is a virtual product operations system for Xianyu in multi-tenant en
 
 The system does more than send a block of text after receiving an order. It connects **order discovery, idempotent queuing, inventory reservation, dual-channel delivery, failure retries, and manual review** into a complete recoverable workflow. Fixed content and card-key delivery modes are strictly mutually exclusive, while accounts, products, messages, orders, inventory, tasks, and AI knowledge bases are isolated by tenant. Core task workflows rely only on MySQL, without requiring Redis or a message queue, balancing deployment cost with future extensibility.
 
-Current version: [2.0.7](https://github.com/Evvvvvvvan/XianYuSmart/releases/tag/v2.0.7) · [View changelog](CHANGELOG.md)
+Current version: [2.1.0](https://github.com/SeanChengN/XianYuSmart/releases/tag/v2.1.0) · [View changelog](CHANGELOG.md)
 
 [Community & Support](#community--support) · [Benefits for Merchants](#benefits-for-merchants) · [Technical Highlights](#technical-highlights) · [Problems Solved](#problems-solved) · [Feature Scope](#feature-scope) · [Feature Entry Points & Setup Order](#feature-entry-points--setup-order) · [Business Workflow](#business-workflow) · [Technical Baseline](#technical-baseline) · [Container Image Deployment](#container-image-deployment) · [Quick Start](#quick-start) · [Configuration](#configuration) · [Development Build](#development-build) · [Build & Verification](#build--verification) · [Directory Responsibilities](#directory-responsibilities) · [Routine Operations](#routine-operations) · [Usage Boundaries](#usage-boundaries) · [License & Disclaimer](#license--disclaimer) · [Star History](#star-history)
 
@@ -206,8 +206,8 @@ flowchart LR
 Every official Release automatically publishes a `linux/amd64` image to GitHub Container Registry. Fixed versions are suitable for production deployment, while `latest` is intended for trying the latest official release.
 
 ```bash
-docker pull ghcr.io/evvvvvvvan/xianyusmart:v2.0.7
-docker pull ghcr.io/evvvvvvvan/xianyusmart:latest
+docker pull ghcr.io/seanchengn/xianyusmart:v2.1.0
+docker pull ghcr.io/seanchengn/xianyusmart:latest
 ```
 
 Start a fixed version using the repository's Docker Compose configuration:
@@ -217,7 +217,7 @@ Linux:
 ```bash
 cp .env.example .env
 # Update the database password and strong JWT secret in .env
-export APP_IMAGE=ghcr.io/evvvvvvvan/xianyusmart:v2.0.7
+export APP_IMAGE=ghcr.io/seanchengn/xianyusmart:v2.1.0
 docker compose pull app
 docker compose up -d --no-build
 ```
@@ -227,7 +227,7 @@ Windows PowerShell:
 ```powershell
 Copy-Item .env.example .env
 notepad .env
-$env:APP_IMAGE = 'ghcr.io/evvvvvvvan/xianyusmart:v2.0.7'
+$env:APP_IMAGE = 'ghcr.io/seanchengn/xianyusmart:v2.1.0'
 docker compose pull app
 docker compose up -d --no-build
 ```

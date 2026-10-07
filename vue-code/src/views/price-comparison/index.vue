@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { getAccountList } from '@/api/account'
 import {
+  addOpportunitiesToSupply,
   getSellerPublicProfile,
   searchOpportunities,
   type OpportunityCandidate,
@@ -12,17 +13,33 @@ import { toast } from '@/utils/toast'
 import '@/styles/merchant-workbench.css'
 import CompetitorSkuPanel from '@/components/CompetitorSkuPanel.vue'
 import { displayPriceCents, displayPriceSummary, formatMoneyCents } from '@/utils/competitor-price'
+import ProductReferenceStats from '@/components/ProductReferenceStats.vue'
+import { searchCache, type SearchResultState } from '@/utils/search-cache'
+import { getAuthUsername } from '@/utils/request'
+import { filterSearchResults, validWantMinimum, type ResultSort } from '@/utils/search-result-filter'
+import { hasPermission } from '@/utils/permission'
+
+const minWantCount = ref<number | ''>('')
+const addingSupply = ref(false)
+const canAddSupply = computed(() => hasPermission('action:operations-write'))
+
 
 const accounts = ref<Account[]>([])
 const accountId = ref<number>()
 const keyword = ref('')
 const minPrice = ref<number | ''>('')
 const maxPrice = ref<number | ''>('')
-const sortMode = ref<'relevance' | 'price-asc' | 'price-desc'>('relevance')
+const sortMode = ref<ResultSort>('relevance')
 const loading = ref(false)
 const searched = ref(false)
 const results = ref<OpportunityCandidate[]>([])
 const platformTotal = ref(0)
+const fetchedAt = ref('')
+const cacheWarning = ref(false)
+const owner = getAuthUsername()
+let mounted = true
+let restoring = false
+let savedSearch: SearchResultState | undefined
 const sellerProfiles = ref<Record<string, SellerPublicProfile>>({})
 const sellerProfileLoading = ref(new Set<string>())
 const sellerProfileErrors = ref(new Set<string>())
@@ -30,6 +47,7 @@ const selectedSellerItem = ref<OpportunityCandidate>()
 
 let searchGeneration = 0
 watch(accountId, () => {
+  restoring = true
   searchGeneration++
   results.value = []
   searched.value = false
@@ -38,7 +56,55 @@ watch(accountId, () => {
   sellerProfileLoading.value = new Set()
   sellerProfileErrors.value = new Set()
   selectedSellerItem.value = undefined
-})
+  keyword.value = ''
+  minPrice.value = ''
+  maxPrice.value = ''
+  sortMode.value = 'relevance'
+  minWantCount.value = ''
+  platformTotal.value = 0
+  fetchedAt.value = ''
+  savedSearch = undefined
+  if (accountId.value && accounts.value.some(account => String(account.id) === String(accountId.value))) {
+    cacheWarning.value = !searchCache.selectAccount(owner, 'comparison', accountId.value, accounts.value.map(account => account.id))
+    savedSearch = searchCache.read(owner, 'comparison', accountId.value)
+    if (savedSearch) {
+      minWantCount.value = savedSearch.minWantCount ?? ''
+      keyword.value = savedSearch.keyword
+      minPrice.value = savedSearch.minPrice ?? ''
+      maxPrice.value = savedSearch.maxPrice ?? ''
+      sortMode.value = savedSearch.sortMode || 'relevance'
+      results.value = savedSearch.results
+      platformTotal.value = savedSearch.total
+      fetchedAt.value = savedSearch.fetchedAt
+      searched.value = true
+    }
+  }
+  restoring = false
+}, { flush: 'sync' })
+const persistResults = () => {
+  if (restoring || !mounted || owner !== getAuthUsername() || !accountId.value || !savedSearch) return
+  cacheWarning.value = !searchCache.save(owner, 'comparison', accountId.value, {
+    ...savedSearch, results: results.value, minPrice: minPrice.value, maxPrice: maxPrice.value, minWantCount: validWantMinimum(minWantCount.value) ? minWantCount.value : '', sortMode: sortMode.value
+  })
+}
+watch(results, persistResults, { deep: true })
+watch([minPrice, maxPrice, minWantCount, sortMode], persistResults, { flush: 'sync' })
+watch(keyword, () => { if (!restoring) { searchGeneration++; loading.value = false } }, { flush: 'sync' })
+const clearResults = () => {
+  searchGeneration++
+  loading.value = false
+  results.value = []
+  searched.value = false
+  fetchedAt.value = ''
+  platformTotal.value = 0
+  savedSearch = undefined
+  sellerProfiles.value = {}
+  sellerProfileLoading.value = new Set()
+  sellerProfileErrors.value = new Set()
+  selectedSellerItem.value = undefined
+  if (accountId.value) cacheWarning.value = !searchCache.remove(owner, 'comparison', accountId.value)
+}
+onBeforeUnmount(() => { mounted = false; searchGeneration++ })
 const priceNumber = (value?: string | number) => displayPriceCents(value) ?? 0
 
 const filteredResults = computed(() => {
@@ -50,9 +116,7 @@ const filteredResults = computed(() => {
     if (maximum != null && price > maximum) return false
     return true
   })
-  if (sortMode.value === 'price-asc') return [...list].sort((a, b) => priceNumber(a.price) - priceNumber(b.price))
-  if (sortMode.value === 'price-desc') return [...list].sort((a, b) => priceNumber(b.price) - priceNumber(a.price))
-  return list
+  return filterSearchResults(list, minWantCount.value, sortMode.value)
 })
 
 const priceSummary = computed(() => displayPriceSummary(filteredResults.value.map(item => item.price)))
@@ -105,8 +169,11 @@ const showSellerProfile = (item: OpportunityCandidate) => {
 
 const loadAccounts = async () => {
   const response = await getAccountList()
+  if (!mounted || owner !== getAuthUsername()) return
   accounts.value = response.data?.accounts || []
-  accountId.value ||= accounts.value[0]?.id
+  cacheWarning.value = !searchCache.pruneAccounts(owner, accounts.value.map(account => account.id))
+  const last = searchCache.lastAccount(owner, 'comparison')
+  accountId.value = accounts.value.find(account => String(account.id) === last)?.id || accounts.value[0]?.id
 }
 
 const search = async () => {
@@ -116,6 +183,7 @@ const search = async () => {
     return toast.warning('最低价不能高于最高价')
   }
   const current = ++searchGeneration
+  const queryKeyword = keyword.value
   loading.value = true
   try {
     const response = await searchOpportunities({
@@ -124,7 +192,7 @@ const search = async () => {
       pageNumber: 1,
       limit: 50
     })
-    if (current !== searchGeneration) return
+    if (current !== searchGeneration || !mounted || owner !== getAuthUsername()) return
     results.value = response.data?.items || []
     platformTotal.value = Number(response.data?.total || results.value.length)
     sellerProfiles.value = {}
@@ -132,12 +200,30 @@ const search = async () => {
     sellerProfileErrors.value = new Set()
     selectedSellerItem.value = undefined
     searched.value = true
-  } finally {
+    fetchedAt.value = new Date().toISOString()
+    savedSearch = { keyword: queryKeyword, results: results.value, pageNumber: 1,
+      hasMore: Boolean(response.data?.hasMore), total: platformTotal.value, fetchedAt: fetchedAt.value }
+    persistResults()
+  } catch { /* Keep the previous successful results when the platform search fails. */ }
+  finally {
     if (current === searchGeneration) loading.value = false
   }
 }
 
+const addSupply = async (item: OpportunityCandidate) => {
+  if (addingSupply.value || !accountId.value || !canAddSupply.value) return
+  const current = searchGeneration, selectedAccount = accountId.value
+  addingSupply.value = true
+  try {
+    const response = await addOpportunitiesToSupply({ candidates: [item], xianyuAccountId: selectedAccount })
+    if (mounted && current === searchGeneration && selectedAccount === accountId.value && owner === getAuthUsername() && response.data)
+      toast.success(`新增 ${response.data.addedCount} 件，已有 ${response.data.existingCount} 件`)
+  } catch { /* Request utility displays failures; preserve the result list. */ }
+  finally { addingSupply.value = false }
+}
+
 const resetFilters = () => {
+  minWantCount.value = ''
   minPrice.value = ''
   maxPrice.value = ''
   sortMode.value = 'relevance'
@@ -166,16 +252,26 @@ onMounted(loadAccounts)
     <div class="workbench__card comparison__filters">
       <label class="workbench__field">最低价<input v-model.number="minPrice" class="workbench__input" type="number" min="0" placeholder="不限"></label>
       <label class="workbench__field">最高价<input v-model.number="maxPrice" class="workbench__input" type="number" min="0" placeholder="不限"></label>
+      <label class="workbench__field">最低想要人数<input v-model.number="minWantCount" class="workbench__input" type="number" min="0" step="1" placeholder="不限"></label>
       <label class="workbench__field">排序
         <select v-model="sortMode" class="workbench__select">
           <option value="relevance">综合匹配</option>
           <option value="price-asc">价格从低到高</option>
           <option value="price-desc">价格从高到低</option>
+          <option value="want-asc">想要人数从少到多</option>
+          <option value="want-desc">想要人数从多到少</option>
         </select>
       </label>
       <button class="workbench__btn" @click="resetFilters">重置筛选</button>
     </div>
 
+    <div v-if="searched" class="comparison__result-meta">
+      <span>结果获取时间 {{ new Date(fetchedAt).toLocaleString('zh-CN') }}</span>
+      <button class="workbench__btn" @click="clearResults">清空搜索结果</button>
+    </div>
+    <p class="search-filter-note">筛选和排序仅作用于已加载结果，不会自动搜索或加载下一页。</p>
+    <p v-if="!validWantMinimum(minWantCount)" class="search-cache-warning">最低想要人数请输入非负整数。</p>
+    <p v-if="cacheWarning" class="search-cache-warning">浏览器无法保存搜索结果，当前页面仍会保留；刷新后可能丢失。</p>
     <div v-if="searched" class="comparison__metrics">
       <div class="workbench__card"><span>当前结果</span><strong>{{ filteredResults.length }}</strong><small>平台匹配 {{ platformTotal || results.length }} 件</small></div>
       <div class="workbench__card"><span>搜索展示最低价</span><strong>¥ {{ formatMoneyCents(priceSummary.lowest) }}</strong><small>当前筛选范围</small></div>
@@ -189,6 +285,7 @@ onMounted(loadAccounts)
         <div v-else class="comparison__image-empty">暂无图片</div>
         <div class="comparison__content">
           <h2>{{ item.title }}</h2>
+          <ProductReferenceStats :sold-count-text="item.soldCountText" :want-count-text="item.wantCountText" />
           <div class="comparison__seller">
             <strong>{{ item.sellerNick || '平台卖家' }}</strong>
             <span v-if="hasValue(profileFor(item)?.sellerCredit)">信用 {{ profileFor(item)?.sellerCredit }}</span>
@@ -207,9 +304,10 @@ onMounted(loadAccounts)
           <strong>¥ {{ formatMoneyCents(displayPriceCents(item.price)) }}</strong>
           <small>搜索展示价</small>
           <a class="workbench__btn" :href="item.sourceUrl" target="_blank" rel="noopener noreferrer">查看原商品</a>
+          <button v-if="canAddSupply" class="workbench__btn" :disabled="addingSupply" @click="addSupply(item)">{{ addingSupply ? '入库中…' : '加入货源库' }}</button>
         </div>
       </article>
-      <div v-if="searched && !filteredResults.length" class="workbench__card workbench__empty">当前价格范围内没有结果，可调整筛选条件后查看。</div>
+      <div v-if="searched && !filteredResults.length" class="workbench__card workbench__empty">当前筛选条件下没有结果，可调整筛选条件后查看。</div>
       <div v-else-if="!searched" class="workbench__card workbench__empty">输入关键词后开始全站比价。</div>
     </div>
 
@@ -251,8 +349,11 @@ onMounted(loadAccounts)
 </template>
 
 <style scoped>
+.search-filter-note { color: #667085; font-size: 12px; }
 .comparison__search { display: grid; grid-template-columns: 190px minmax(0, 1fr) auto; gap: 10px; }
-.comparison__filters { display: grid; grid-template-columns: repeat(3, minmax(150px, 220px)) auto; align-items: end; gap: 12px; margin-top: 12px; }
+.comparison__result-meta { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-top: 12px; color: #667085; font-size: 12px; }
+.search-cache-warning { color: #b54708; font-size: 12px; }
+.comparison__filters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)) auto; align-items: end; gap: 12px; margin-top: 12px; }
 .comparison__metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 12px; }
 .comparison__metrics span, .comparison__metrics small { display: block; color: #667085; font-size: 12px; }
 .comparison__metrics strong { display: block; margin: 7px 0 3px; font-size: 22px; }
@@ -291,7 +392,7 @@ onMounted(loadAccounts)
   .comparison__item { grid-template-columns: 72px minmax(0, 1fr); align-items: start; }
   .comparison__item > img, .comparison__image-empty { width: 72px; height: 72px; }
   .comparison__content h2 { display: -webkit-box; white-space: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-  .comparison__action { grid-column: 1 / -1; align-items: center; flex-direction: row; justify-content: space-between; }
+  .comparison__action { grid-column: 1 / -1; align-items: stretch; flex-direction: column; }
   .comparison__action > strong { text-align: left; }
   .comparison__dialog-mask { align-items: end; padding: 0; }
   .comparison__dialog { width: 100%; max-height: calc(100dvh - 24px); border-radius: 14px 14px 0 0; padding-bottom: max(18px, env(safe-area-inset-bottom)); }

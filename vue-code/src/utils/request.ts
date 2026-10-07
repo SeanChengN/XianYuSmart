@@ -1,5 +1,6 @@
 import axios, { type AxiosInstance, type AxiosRequestConfig, type AxiosResponse } from 'axios'
 import { toast } from './toast'
+import { searchCache } from './search-cache'
 import type { ApiResponse } from '@/types'
 
 export interface RequestConfig extends AxiosRequestConfig {
@@ -9,6 +10,9 @@ export interface RequestConfig extends AxiosRequestConfig {
 // Token存储key
 const TOKEN_KEY = 'xianyu_auth_token'
 const USERNAME_KEY = 'xianyu_auth_username'
+window.addEventListener('storage', event => {
+  if (event.key === TOKEN_KEY || event.key === USERNAME_KEY || event.key === null) searchCache.clear()
+})
 
 /** 获取Token */
 export function getAuthToken(): string | null {
@@ -17,12 +21,14 @@ export function getAuthToken(): string | null {
 
 /** 设置Token */
 export function setAuthToken(token: string, username: string) {
+  if (getAuthUsername() !== username) searchCache.clear()
   localStorage.setItem(TOKEN_KEY, token)
   localStorage.setItem(USERNAME_KEY, username)
 }
 
 /** 清除Token */
 export function clearAuthToken() {
+  searchCache.clear()
   localStorage.removeItem(TOKEN_KEY)
   localStorage.removeItem(USERNAME_KEY)
 }

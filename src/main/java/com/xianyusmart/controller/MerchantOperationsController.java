@@ -155,6 +155,15 @@ public class MerchantOperationsController {
         }
     }
 
+    @PostMapping("/opportunities/supply")
+    public ResultObject<Map<String, Object>> addOpportunitiesToSupply(@RequestBody Map<String, Object> request) {
+        try {
+            return ResultObject.success(operationsService.addOpportunitiesToSupply(request));
+        } catch (Exception e) {
+            return ResultObject.failed(e.getMessage());
+        }
+    }
+
     @PostMapping("/opportunities/import")
     public ResultObject<List<MerchantResourceRespDTO>> importOpportunities(@RequestBody Map<String, Object> request) {
         try {

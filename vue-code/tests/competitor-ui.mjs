@@ -13,7 +13,12 @@ const browser = await chromium.launch({
   headless: true, args: ['--disable-background-networking'],
 })
 const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } })
-await context.addInitScript(() => localStorage.setItem('xianyu_auth_token', 'synthetic-local-test'))
+await context.addInitScript(() => {
+  localStorage.setItem('xianyu_auth_token', 'synthetic-local-test')
+  localStorage.setItem('xianyu_auth_username', 'synthetic')
+  // Each legacy SKU scenario starts independently; cache restoration has its own regression.
+  sessionStorage.removeItem('xianyu_search_results_v1')
+})
 const items = [
   { itemId: '1085721375729', title: '合成样本 A', price: '12.70', opportunityScore: 90, riskLevel: 'LOW', matchReason: '测试数据', images: [] },
   { itemId: '698321371327', title: '合成样本 B', price: '10.99', opportunityScore: 80, riskLevel: 'LOW', matchReason: '测试数据', images: [] },

@@ -30,7 +30,7 @@ import java.util.UUID;
 public class SystemUpdateService {
 
     private static final String DEFAULT_RELEASE_API =
-            "https://api.github.com/repos/Evvvvvvvan/XianYuSmart/releases/latest";
+            "https://api.github.com/repos/SeanChengN/XianYuSmart/releases/latest";
     private static final Set<String> ACTIVE_STATUSES = Set.of(
             "REQUESTED", "CHECKING", "DOWNLOADING", "VERIFYING",
             "INSTALLING", "RESTARTING", "HEALTH_CHECKING");
@@ -39,7 +39,7 @@ public class SystemUpdateService {
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
 
-    @Value("${app.version:2.0.7}")
+    @Value("${app.version:2.1.0}")
     private String currentVersion;
 
     @Value("${app.update.release-api:}")

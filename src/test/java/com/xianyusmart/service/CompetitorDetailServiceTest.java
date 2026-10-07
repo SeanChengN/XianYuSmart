@@ -41,6 +41,19 @@ class CompetitorDetailServiceTest {
     }
     @AfterEach void cleanup() { TenantContext.clear(); }
 
+    @Test void cacheOnlyReadsNeverCallPlatformAndRespectScopeExpiryOwnership() {
+        assertTrue(service.cached(2L,item).isEmpty());
+        verifyNoInteractions(api,accounts,risk);
+        service.fetch(2L,item,false);clearInvocations(api,accounts,risk);
+        assertTrue(service.cached(2L,item).containsKey("competitorSnapshot"));
+        assertTrue(service.cached(3L,item).isEmpty());
+        TenantContext.set(4L);assertTrue(service.cached(2L,item).isEmpty());TenantContext.set(1L);
+        var foreign=new XianyuAccount();foreign.setTenantId(4L);when(mapper.selectById(9L)).thenReturn(foreign);
+        assertThrows(IllegalArgumentException.class,()->service.cached(9L,item));
+        clock.time+=3600001;assertTrue(service.cached(2L,item).isEmpty());
+        verifyNoInteractions(api,accounts,risk);assertTrue(waits.isEmpty());
+    }
+
     @Test void cacheIsIsolatedExpiresAndForceRefreshStillPaces() {
         service.fetch(2L,item,false); service.fetch(2L,item,false);
         verify(api,times(1)).callApiWithRetry(anyLong(),eq("mtop.taobao.idle.trade.order.render"),eq("7.0"),anyMap(),anyString(),anyMap(),anyMap());
