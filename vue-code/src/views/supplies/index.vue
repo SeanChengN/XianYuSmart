@@ -5,12 +5,24 @@ import { convertSupplyToMaterial, deleteResource, executeResource, getResources,
 import type { Account } from '@/types'
 import { toast } from '@/utils/toast'
 import '@/styles/merchant-workbench.css'
+import CompetitorSkuPanel from '@/components/CompetitorSkuPanel.vue'
+import { displayPriceCents, formatMoneyCents } from '@/utils/competitor-price'
+import type { CompetitorDetail, CompetitorSkuSnapshot } from '@/api/merchant'
 
 const loading = ref(false)
 const supplies = ref<MerchantResource[]>([])
 const accounts = ref<Account[]>([])
 const keyword = ref('')
 const editorOpen = ref(false)
+const selectedSupply = ref<MerchantResource>()
+const supplySnapshot = computed(() => selectedSupply.value?.data?.competitorSnapshot as CompetitorSkuSnapshot | undefined)
+const supplyItemId = computed(() => {
+  const source = String(selectedSupply.value?.data?.sourceUrl || '')
+  return source.match(/(?:[?&]id=|\/item\/)(\d{8,64})/)?.[1] || selectedSupply.value?.xyGoodsId
+})
+const updateSnapshot = (detail: CompetitorDetail) => {
+  if (selectedSupply.value) selectedSupply.value.data = { ...selectedSupply.value.data, ...detail }
+}
 const form = reactive({
   id: undefined as number | undefined,
   name: '',
@@ -29,6 +41,7 @@ const filtered = computed(() => {
 })
 
 const load = async () => {
+  selectedSupply.value = undefined
   loading.value = true
   try {
     const [resourceResult, accountResult] = await Promise.all([getResources('SUPPLY'), getAccountList()])
@@ -77,14 +90,15 @@ const save = async () => {
 }
 
 const collect = async (item: MerchantResource) => {
-  await executeResource(item.id)
-  toast.success('采集任务已完成')
+  const response = await executeResource(item.id)
+  if (response.data?.status === -1) toast.warning(response.data.errorMessage || '采集失败，请查看任务记录')
+  else toast.success('采集任务已完成')
   await load()
 }
 
 const materialize = async (item: MerchantResource) => {
   await convertSupplyToMaterial(item.id)
-  toast.success('已生成可发布素材')
+  toast.success('已生成素材，请在发布前填写自己的售价和库存')
 }
 
 const remove = async (item: MerchantResource) => {
@@ -113,13 +127,14 @@ onMounted(load)
         <div>
           <h3>{{ item.name }}</h3>
           <div class="workbench__tags">
-            <span class="workbench__tag">¥ {{ item.amount }}</span>
+            <span class="workbench__tag">{{ item.data?.priceSource === 'SEARCH_DISPLAY' || (!item.data?.competitorSnapshot?.capturedAt && item.data?.detailStatus === 'SEARCH_FALLBACK') ? '搜索展示价' : '参考展示价' }} ¥ {{ formatMoneyCents(displayPriceCents(item.amount)) }}</span>
             <span class="workbench__tag">库存 {{ item.stock }}</span>
             <span class="workbench__tag" :class="{ 'workbench__tag--good': item.data?.images?.length }">{{ item.data?.images?.length ? `${item.data.images.length} 张图` : '待补图片' }}</span>
             <span v-if="item.xyGoodsId" class="workbench__tag">ID {{ item.xyGoodsId }}</span>
           </div>
         </div>
         <div class="workbench__actions">
+          <button class="workbench__btn" @click="selectedSupply = item">查看规格</button>
           <button class="workbench__btn" @click="collect(item)">采集更新</button>
           <button class="workbench__btn" @click="materialize(item)">生成素材</button>
           <button class="workbench__btn" @click="edit(item)">编辑</button>
@@ -129,6 +144,14 @@ onMounted(load)
       <div v-if="!filtered.length" class="workbench__empty">暂无货源，可从商机发掘导入或手动创建。</div>
     </div>
 
+    <div v-if="selectedSupply" class="supply-dialog" @click.self="selectedSupply = undefined" @keydown.esc="selectedSupply = undefined">
+      <section class="workbench__card supply-dialog__panel" role="dialog" aria-modal="true" aria-label="货源规格">
+        <h2>{{ selectedSupply.name }} · 竞品规格</h2>
+        <CompetitorSkuPanel :key="selectedSupply.id" :item-id="supplyItemId" :account-id="selectedSupply.xianyuAccountId" :initial-snapshot="supplySnapshot" @loaded="updateSnapshot" />
+        <p v-if="!supplyItemId || !selectedSupply.xianyuAccountId">请先填写来源商品和采集账号。</p>
+        <div class="workbench__actions supply-dialog__footer"><button type="button" class="workbench__btn" autofocus @click="selectedSupply = undefined">关闭规格</button></div>
+      </section>
+    </div>
     <div v-if="editorOpen" class="supply-dialog" @click.self="editorOpen = false">
       <form class="workbench__card supply-dialog__panel" @submit.prevent="save">
         <h2>{{ form.id ? '编辑货源' : '新增货源' }}</h2>
@@ -153,7 +176,7 @@ onMounted(load)
 
 <style scoped>
 .supply-dialog { position: fixed; inset: 0; z-index: 1200; display: grid; place-items: center; padding: 16px; background: rgba(16, 24, 40, .45); }
-.supply-dialog__panel { width: min(760px, 100%); max-height: 90vh; overflow: auto; }
+.supply-dialog__panel { box-sizing: border-box; min-width: 0; width: min(760px, 100%); max-height: 90vh; overflow: auto; }
 .supply-dialog__panel h2 { margin-top: 0; }
 .supply-dialog__panel > .workbench__field { margin-top: 14px; }
 .supply-dialog__footer { justify-content: flex-end; margin-top: 16px; }

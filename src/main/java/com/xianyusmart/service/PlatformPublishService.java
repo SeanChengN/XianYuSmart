@@ -46,6 +46,7 @@ public class PlatformPublishService {
     private final GoodsInfoService goodsInfoService;
     private final PlatformMarketplaceParser responseParser;
     private final PublishAddressCatalog addressCatalog;
+    private final CompetitorDetailService competitorDetails;
 
     public PlatformPublishService(PlaywrightManager playwrightManager,
                                   AccountService accountService,
@@ -53,7 +54,8 @@ public class PlatformPublishService {
                                   XianyuApiCallUtils apiCallUtils,
                                   RiskControlService riskControlService,
                                   ImageUploadService imageUploadService,
-                                  GoodsInfoService goodsInfoService) {
+                                  GoodsInfoService goodsInfoService,
+                                  CompetitorDetailService competitorDetails) {
         this.playwrightManager = playwrightManager;
         this.accountService = accountService;
         this.objectMapper = objectMapper;
@@ -63,6 +65,7 @@ public class PlatformPublishService {
         this.goodsInfoService = goodsInfoService;
         this.responseParser = new PlatformMarketplaceParser(objectMapper);
         this.addressCatalog = new PublishAddressCatalog(objectMapper);
+        this.competitorDetails = competitorDetails;
     }
 
     public Map<String, Object> publish(MerchantResource material, Long accountId) {
@@ -174,7 +177,7 @@ public class PlatformPublishService {
         try {
             stock = Integer.parseInt(text(request.get("stock")));
         } catch (Exception e) {
-            stock = 1;
+            throw new IllegalArgumentException("请填写自己的发布库存，必须为正整数");
         }
         validatePublishInput(title, description, images, amount, stock);
         Map<String, Object> category = recommendCategory(accountId, cookieText, title, description, images);
@@ -266,25 +269,15 @@ public class PlatformPublishService {
             throw new IllegalArgumentException("闲鱼商品链接缺少商品ID");
         }
         String itemId = matcher.group(1);
-        String cookieText = accountService.getCookieByAccountId(accountId);
-        if (cookieText == null || cookieText.isBlank()) {
-            throw new IllegalStateException("账号Cookie不可用");
-        }
-        // 商品采集复用 XianYuApis 的签名商品详情接口，避免页面结构变化导致采集失效。
-        XianyuApiCallUtils.ApiCallResult result = apiCallUtils.callApiWithRetry(
-                accountId,
-                "mtop.taobao.idle.pc.detail",
-                Map.of("itemId", itemId),
-                cookieText,
-                null,
-                Map.of(
-                        "spm_cnt", "a21ybx.im.0.0",
-                        "spm_pre", "a21ybx.item.want.1"
-                ));
-        if (!result.isSuccess()) {
-            throw new IllegalStateException("平台商品详情获取失败: " + result.getErrorMessage());
-        }
-        return responseParser.parseItemDetailResponse(result.getResponse(), itemId);
+        return competitorDetails.fetch(accountId, itemId, false);
+    }
+
+    public Map<String, Object> competitorDetail(Long accountId, String itemId, boolean forceRefresh) {
+        return competitorDetails.fetch(accountId, itemId, forceRefresh);
+    }
+
+    public void assertCollectionAllowed(Long accountId) {
+        competitorDetails.assertAllowed(accountId);
     }
 
     public List<Map<String, Object>> search(String keyword, Long accountId, int limit) {

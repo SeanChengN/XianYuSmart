@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { getAccountList } from '@/api/account'
 import {
   getSellerPublicProfile,
@@ -10,6 +10,8 @@ import {
 import type { Account } from '@/types'
 import { toast } from '@/utils/toast'
 import '@/styles/merchant-workbench.css'
+import CompetitorSkuPanel from '@/components/CompetitorSkuPanel.vue'
+import { displayPriceCents, displayPriceSummary, formatMoneyCents } from '@/utils/competitor-price'
 
 const accounts = ref<Account[]>([])
 const accountId = ref<number>()
@@ -26,15 +28,22 @@ const sellerProfileLoading = ref(new Set<string>())
 const sellerProfileErrors = ref(new Set<string>())
 const selectedSellerItem = ref<OpportunityCandidate>()
 
-const priceNumber = (value?: string | number) => {
-  const normalized = String(value ?? '').replace(/[^0-9.]/g, '')
-  const price = Number(normalized)
-  return Number.isFinite(price) ? price : 0
-}
+let searchGeneration = 0
+watch(accountId, () => {
+  searchGeneration++
+  results.value = []
+  searched.value = false
+  loading.value = false
+  sellerProfiles.value = {}
+  sellerProfileLoading.value = new Set()
+  sellerProfileErrors.value = new Set()
+  selectedSellerItem.value = undefined
+})
+const priceNumber = (value?: string | number) => displayPriceCents(value) ?? 0
 
 const filteredResults = computed(() => {
-  const minimum = minPrice.value === '' ? undefined : Number(minPrice.value)
-  const maximum = maxPrice.value === '' ? undefined : Number(maxPrice.value)
+  const minimum = minPrice.value === '' ? undefined : displayPriceCents(minPrice.value)
+  const maximum = maxPrice.value === '' ? undefined : displayPriceCents(maxPrice.value)
   const list = results.value.filter(item => {
     const price = priceNumber(item.price)
     if (minimum != null && price < minimum) return false
@@ -46,13 +55,7 @@ const filteredResults = computed(() => {
   return list
 })
 
-const priceSummary = computed(() => {
-  const prices = filteredResults.value.map(item => priceNumber(item.price)).filter(price => price > 0).sort((a, b) => a - b)
-  if (!prices.length) return { lowest: 0, median: 0, highest: 0 }
-  const middle = Math.floor(prices.length / 2)
-  const median = prices.length % 2 ? prices[middle]! : (prices[middle - 1]! + prices[middle]!) / 2
-  return { lowest: prices[0]!, median, highest: prices[prices.length - 1]! }
-})
+const priceSummary = computed(() => displayPriceSummary(filteredResults.value.map(item => item.price)))
 
 const profileKey = (item: OpportunityCandidate) => item.sellerId || item.itemId
 const profileFor = (item: OpportunityCandidate): SellerPublicProfile => sellerProfiles.value[profileKey(item)] || {
@@ -73,18 +76,22 @@ const loadSellerProfile = async (item: OpportunityCandidate) => {
   if (!accountId.value) return
   const key = profileKey(item)
   if (sellerProfiles.value[key] || sellerProfileLoading.value.has(key)) return
+  const current = searchGeneration
   sellerProfileLoading.value = new Set([...sellerProfileLoading.value, key])
   sellerProfileErrors.value.delete(key)
   try {
     const response = await getSellerPublicProfile({ itemId: item.itemId, xianyuAccountId: accountId.value })
+    if (current !== searchGeneration) return
     if (!response.data) throw new Error(response.msg || '该商品暂未返回卖家口碑')
     const profile = { ...profileFor(item), ...response.data }
     const profiles = { ...sellerProfiles.value, [key]: profile }
     if (profile.sellerId) profiles[profile.sellerId] = profile
     sellerProfiles.value = profiles
   } catch {
+    if (current !== searchGeneration) return
     sellerProfileErrors.value = new Set([...sellerProfileErrors.value, key])
   } finally {
+    if (current !== searchGeneration) return
     const loadingKeys = new Set(sellerProfileLoading.value)
     loadingKeys.delete(key)
     sellerProfileLoading.value = loadingKeys
@@ -108,6 +115,7 @@ const search = async () => {
   if (minPrice.value !== '' && maxPrice.value !== '' && minPrice.value > maxPrice.value) {
     return toast.warning('最低价不能高于最高价')
   }
+  const current = ++searchGeneration
   loading.value = true
   try {
     const response = await searchOpportunities({
@@ -116,6 +124,7 @@ const search = async () => {
       pageNumber: 1,
       limit: 50
     })
+    if (current !== searchGeneration) return
     results.value = response.data?.items || []
     platformTotal.value = Number(response.data?.total || results.value.length)
     sellerProfiles.value = {}
@@ -124,7 +133,7 @@ const search = async () => {
     selectedSellerItem.value = undefined
     searched.value = true
   } finally {
-    loading.value = false
+    if (current === searchGeneration) loading.value = false
   }
 }
 
@@ -142,7 +151,7 @@ onMounted(loadAccounts)
     <header class="workbench__header">
       <div>
         <h1>全站比价</h1>
-        <p>按闲鱼全站真实搜索结果比较价格，并集中查看平台公开的卖家评价与信用信息。</p>
+        <p>查看搜索展示价和逐 SKU 价格。搜索汇总尚未按地区、币种和面值对齐，不代表同规格比价。</p>
       </div>
     </header>
 
@@ -169,9 +178,9 @@ onMounted(loadAccounts)
 
     <div v-if="searched" class="comparison__metrics">
       <div class="workbench__card"><span>当前结果</span><strong>{{ filteredResults.length }}</strong><small>平台匹配 {{ platformTotal || results.length }} 件</small></div>
-      <div class="workbench__card"><span>最低价</span><strong>¥ {{ priceSummary.lowest || '--' }}</strong><small>当前筛选范围</small></div>
-      <div class="workbench__card"><span>中位价</span><strong>¥ {{ priceSummary.median || '--' }}</strong><small>减少极端价格干扰</small></div>
-      <div class="workbench__card"><span>最高价</span><strong>¥ {{ priceSummary.highest || '--' }}</strong><small>当前筛选范围</small></div>
+      <div class="workbench__card"><span>搜索展示最低价</span><strong>¥ {{ formatMoneyCents(priceSummary.lowest) }}</strong><small>当前筛选范围</small></div>
+      <div class="workbench__card"><span>搜索展示中位价</span><strong>¥ {{ formatMoneyCents(priceSummary.median) }}</strong><small>包含不同规格，仅供搜索参考</small></div>
+      <div class="workbench__card"><span>搜索展示最高价</span><strong>¥ {{ formatMoneyCents(priceSummary.highest) }}</strong><small>当前筛选范围</small></div>
     </div>
 
     <div class="comparison__list workbench__section">
@@ -191,9 +200,12 @@ onMounted(loadAccounts)
             <button class="comparison__review-link" @click="showSellerProfile(item)">查看卖家口碑</button>
           </div>
           <small>信用与评价均来自该卖家的平台公开历史统计，不使用商品评价或推测数据。</small>
+          <CompetitorSkuPanel :item-id="item.itemId" :account-id="accountId" :initial-snapshot="item.competitorSnapshot"
+            @loaded="detail => item.competitorSnapshot = detail.competitorSnapshot" />
         </div>
         <div class="comparison__action">
-          <strong>¥ {{ item.price || '--' }}</strong>
+          <strong>¥ {{ formatMoneyCents(displayPriceCents(item.price)) }}</strong>
+          <small>搜索展示价</small>
           <a class="workbench__btn" :href="item.sourceUrl" target="_blank" rel="noopener noreferrer">查看原商品</a>
         </div>
       </article>

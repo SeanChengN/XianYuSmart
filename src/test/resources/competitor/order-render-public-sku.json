@@ -1,0 +1,220 @@
+{
+  "ret": [
+    "SUCCESS::调用成功"
+  ],
+  "data": {
+    "components": [
+      {
+        "render": "itemDescVO",
+        "data": {
+          "title": "public SKU sample",
+          "price": "15.00",
+          "skuId": "6128291728428",
+          "itemPriceDetails": [
+            {
+              "name": {
+                "fontWeight": "500",
+                "text": "小计"
+              },
+              "price": {
+                "text": "15.00",
+                "textColor": "#FF4400"
+              },
+              "priceInNumber": "1500",
+              "type": "sub_total"
+            }
+          ]
+        }
+      },
+      {
+        "render": "skuSelectorVO",
+        "data": {
+          "selectedSkuData": {
+            "selectedPath": "-1:-2",
+            "skuId": "6128291728428"
+          },
+          "specificationInfoList": [
+            {
+              "size": "12",
+              "sortId": "1",
+              "specificationId": "-1",
+              "specificationList": [
+                {
+                  "canSelected": "true",
+                  "id": "-1:-1",
+                  "priceText": "¥7.30",
+                  "selected": "false",
+                  "sortId": "0",
+                  "value": "1美"
+                },
+                {
+                  "canSelected": "true",
+                  "id": "-1:-2",
+                  "priceText": "¥15.00",
+                  "selected": "true",
+                  "sortId": "1",
+                  "value": "2美"
+                },
+                {
+                  "canSelected": "true",
+                  "id": "-1:-3",
+                  "priceText": "¥25.00",
+                  "selected": "false",
+                  "sortId": "2",
+                  "value": "3美"
+                },
+                {
+                  "canSelected": "true",
+                  "id": "-1:-4",
+                  "priceText": "¥36.00",
+                  "selected": "false",
+                  "sortId": "3",
+                  "value": "5美"
+                },
+                {
+                  "canSelected": "true",
+                  "id": "-1:-5",
+                  "priceText": "¥71.00",
+                  "selected": "false",
+                  "sortId": "4",
+                  "value": "10美"
+                },
+                {
+                  "canSelected": "true",
+                  "id": "-1:-6",
+                  "priceText": "¥108.00",
+                  "selected": "false",
+                  "sortId": "5",
+                  "value": "15美"
+                },
+                {
+                  "canSelected": "true",
+                  "id": "-1:-7",
+                  "priceText": "¥142.00",
+                  "selected": "false",
+                  "sortId": "6",
+                  "value": "20美"
+                },
+                {
+                  "canSelected": "true",
+                  "id": "-1:-8",
+                  "priceText": "¥178.00",
+                  "selected": "false",
+                  "sortId": "7",
+                  "value": "25美"
+                },
+                {
+                  "canSelected": "true",
+                  "id": "-1:-9",
+                  "priceText": "¥216.00",
+                  "selected": "false",
+                  "sortId": "8",
+                  "value": "30美"
+                },
+                {
+                  "canSelected": "true",
+                  "id": "-1:-10",
+                  "priceText": "¥350.00",
+                  "selected": "false",
+                  "sortId": "9",
+                  "value": "50美"
+                },
+                {
+                  "canSelected": "true",
+                  "id": "-1:-11",
+                  "priceText": "¥700.00",
+                  "selected": "false",
+                  "sortId": "10",
+                  "value": "100美"
+                },
+                {
+                  "canSelected": "true",
+                  "id": "-1:-12",
+                  "priceText": "¥1398.00",
+                  "selected": "false",
+                  "sortId": "11",
+                  "value": "200美"
+                }
+              ],
+              "specificationName": "面值"
+            }
+          ],
+          "skuInfoDetails": {
+            "-1:-8": {
+              "skuId": "6128291728434",
+              "skuPrice": "178.00",
+              "quantity": "7952",
+              "soldOut": "false"
+            },
+            "-1:-11": {
+              "skuId": "6128291728437",
+              "skuPrice": "700.00",
+              "quantity": "7840",
+              "soldOut": "false"
+            },
+            "-1:-7": {
+              "skuId": "6128291728433",
+              "skuPrice": "142.00",
+              "quantity": "7627",
+              "soldOut": "false"
+            },
+            "-1:-10": {
+              "skuId": "6128291728436",
+              "skuPrice": "350.00",
+              "quantity": "7920",
+              "soldOut": "false"
+            },
+            "-1:-9": {
+              "skuId": "6128291728435",
+              "skuPrice": "216.00",
+              "quantity": "7955",
+              "soldOut": "false"
+            },
+            "-1:-2": {
+              "skuId": "6128291728428",
+              "skuPrice": "15.00",
+              "quantity": "7867",
+              "soldOut": "false"
+            },
+            "-1:-1": {
+              "skuId": "6128291728427",
+              "skuPrice": "7.30",
+              "quantity": "0",
+              "soldOut": "true"
+            },
+            "-1:-4": {
+              "skuId": "6128291728430",
+              "skuPrice": "36.00",
+              "quantity": "7894",
+              "soldOut": "false"
+            },
+            "-1:-3": {
+              "skuId": "6128291728429",
+              "skuPrice": "25.00",
+              "quantity": "7988",
+              "soldOut": "false"
+            },
+            "-1:-6": {
+              "skuId": "6128291728432",
+              "skuPrice": "108.00",
+              "quantity": "7957",
+              "soldOut": "false"
+            },
+            "-1:-5": {
+              "skuId": "6128291728431",
+              "skuPrice": "71.00",
+              "quantity": "7846",
+              "soldOut": "false"
+            },
+            "-1:-12": {
+              "skuId": "6128291728438",
+              "skuPrice": "1398.00",
+              "quantity": "7882",
+              "soldOut": "false"
+            }
+          }
+        }
+      }
+    ]
+  }
+}

@@ -2,6 +2,53 @@ import { request } from '@/utils/request'
 
 export type ResourceType = 'ADDRESS' | 'MATERIAL' | 'SUPPLY' | 'PROMOTION_ACCOUNT' | 'SELECTION_RULE' | 'PUBLISH_RULE' | 'DELETE_RULE' | 'ANNOUNCEMENT' | 'FEEDBACK' | 'RISK_EVENT' | 'WORKFLOW'
 
+export interface CompetitorSkuProperty {
+  name: string
+  value: string
+  propertyId?: string
+  valueId?: string
+  propertySortOrder?: number | null
+  valueSortOrder?: number | null
+}
+
+export interface CompetitorSkuSnapshot {
+  itemId: string
+  displayPrice?: string
+  status: 'AVAILABLE' | 'PARTIAL' | 'NO_SKU' | 'MISSING' | 'BLOCKED' | 'FAILED'
+  source?: string
+  capturedAt?: string
+  attemptedAt?: string
+  stale?: boolean
+  message?: string
+  reason?: string
+  skus: Array<{
+    skuId: string
+    priceCents: number | string | null
+    rawPrice?: string
+    priceStatus: 'KNOWN' | 'UNIT_UNCONFIRMED' | 'MISSING' | 'INVALID'
+    quantity: number | string | null
+    properties: CompetitorSkuProperty[]
+  }>
+}
+
+export interface CompetitorDetail {
+  itemId: string
+  title?: string
+  description?: string
+  displayPrice?: string
+  competitorSnapshot?: CompetitorSkuSnapshot
+}
+
+export function getCompetitorDetail(data: {
+  itemId: string
+  xianyuAccountId: number
+  forceRefresh?: boolean
+}, signal?: AbortSignal) {
+  return request<CompetitorDetail>({
+    url: '/merchant/opportunities/detail', method: 'POST', data, silent: true, signal
+  })
+}
+
 export interface OpportunityCandidate {
   itemId: string
   title: string
@@ -9,6 +56,9 @@ export interface OpportunityCandidate {
   description?: string
   images?: string[]
   price?: string | number
+  displayPrice?: string | number
+  priceSource?: string
+  competitorSnapshot?: CompetitorSkuSnapshot
   sellerId?: string
   sellerNick?: string
   sellerAvatar?: string

@@ -22,6 +22,7 @@ import com.xianyusmart.entity.XianyuGoodsInfo;
 import com.xianyusmart.entity.XianyuGoodsAutoDeliveryConfig;
 import com.xianyusmart.entity.XianyuKamiConfig;
 import com.xianyusmart.exception.RiskGuardBlockedException;
+import com.xianyusmart.exception.CompetitorDetailException;
 import com.xianyusmart.mapper.MerchantDistributionMapper;
 import com.xianyusmart.mapper.MerchantResourceMapper;
 import com.xianyusmart.mapper.MerchantTaskMapper;
@@ -30,6 +31,7 @@ import com.xianyusmart.mapper.XianyuAccountMapper;
 import com.xianyusmart.mapper.XianyuKamiConfigMapper;
 import com.xianyusmart.mapper.XianyuGoodsAutoDeliveryConfigMapper;
 import com.xianyusmart.mapper.XianyuGoodsOrderMapper;
+import com.xianyusmart.utils.PlatformRestrictionGuidance;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -163,6 +165,11 @@ public class MerchantOperationsService {
         if (request.getId() == null) {
             resource.setTenantId(requireTenantId());
         }
+        Map<String, Object> savedData = "SUPPLY".equals(request.getResourceType())
+                ? CompetitorSnapshots.edit(request.getId() == null ? Map.of() : readJson(resource.getDataJson()),
+                        request.getData(), resource.getXianyuAccountId(), request.getXianyuAccountId(),
+                        resource.getXyGoodsId(), blankToNull(request.getXyGoodsId()))
+                : request.getData();
         resource.setResourceType(request.getResourceType());
         resource.setName(request.getName().trim());
         resource.setStatus(request.getStatus() == null ? 1 : request.getStatus());
@@ -171,7 +178,7 @@ public class MerchantOperationsService {
         resource.setStock(request.getStock() == null ? 0 : Math.max(0, request.getStock()));
         resource.setAmount(request.getAmount() == null ? BigDecimal.ZERO : request.getAmount().max(BigDecimal.ZERO));
         resource.setScheduledTime(request.getScheduledTime());
-        String dataJson = writeJson(request.getData());
+        String dataJson = writeJson(savedData);
         if (dataJson != null && dataJson.length() > 1024 * 1024) {
             throw new IllegalArgumentException("资源扩展数据不能超过1MB");
         }
@@ -202,6 +209,40 @@ public class MerchantOperationsService {
                 "hasMore", page.hasMore(),
                 "total", page.total()
         );
+    }
+
+    public Map<String, Object> getCompetitorDetail(Map<String, Object> request) {
+        Long accountId = longValue(request.get("xianyuAccountId"));
+        if (accountId == null) throw new IllegalArgumentException("请选择用于采集的账号");
+        validateOwnedAccount(accountId);
+        String itemId = text(request.get("itemId"));
+        if (!itemId.matches("\\d{8,64}")) throw new IllegalArgumentException("商品ID格式无效");
+        MerchantResource existing = resourceMapper.selectByTenantTypeAndGoodsId(requireTenantId(), "SUPPLY", itemId);
+        Map<String, Object> previous = existing == null || !accountId.equals(existing.getXianyuAccountId())
+                ? new LinkedHashMap<>() : readJson(existing.getDataJson());
+        try {
+            Map<String, Object> detail = platformPublishService.competitorDetail(accountId, itemId,
+                    Boolean.TRUE.equals(request.get("forceRefresh")));
+            if (existing != null && accountId.equals(existing.getXianyuAccountId())) {
+                previous.putAll(detail);
+                previous.put("detailStatus", detail.getOrDefault("detailStatus", "SUCCESS"));
+                previous.remove("detailMessage");
+                existing.setDataJson(writeJson(previous));
+                resourceMapper.updateById(existing);
+            }
+            return detail;
+        } catch (IllegalStateException failure) {
+            Map<String, Object> snapshot = CompetitorDetailService.failedSnapshot(previous, itemId,
+                    failure, Instant.now().toString());
+            if (existing != null && accountId.equals(existing.getXianyuAccountId())) {
+                previous.put(CompetitorDetailService.SNAPSHOT_KEY, snapshot);
+                previous.put("detailStatus", "SEARCH_FALLBACK");
+                previous.put("detailMessage", failure.getMessage());
+                existing.setDataJson(writeJson(previous));
+                resourceMapper.updateById(existing);
+            }
+            return Map.of("itemId", itemId, CompetitorDetailService.SNAPSHOT_KEY, snapshot);
+        }
     }
 
     public Map<String, Object> getSellerPublicProfile(Map<String, Object> request) {
@@ -300,6 +341,7 @@ public class MerchantOperationsService {
     @Transactional
     public List<MerchantResourceRespDTO> importOpportunities(Map<String, Object> request) {
         Long accountId = longValue(request.get("xianyuAccountId"));
+        if (accountId == null) throw new IllegalArgumentException("请选择用于采集的账号");
         validateOwnedAccount(accountId);
         if (!(request.get("candidates") instanceof List<?> candidates) || candidates.isEmpty()) {
             throw new IllegalArgumentException("请选择需要加入货源库的商品");
@@ -309,33 +351,42 @@ public class MerchantOperationsService {
         }
         Long tenantId = requireTenantId();
         List<MerchantResourceRespDTO> imported = new ArrayList<>();
+        CompetitorDetailException batchBlocked = null;
+        try { platformPublishService.assertCollectionAllowed(accountId); }
+        catch (CompetitorDetailException e) { batchBlocked = e; }
         for (Object value : candidates) {
-            if (!(value instanceof Map<?, ?> candidateValue)) {
-                continue;
-            }
-            Map<String, Object> candidate = normalizeMap(candidateValue);
-            String sourceUrl = text(candidate.get("sourceUrl"));
-            if (!sourceUrl.isBlank()) {
-                // 入库前通过签名详情接口补齐描述和图片，保证后续润色、发布使用完整商品数据。
-                try {
-                    candidate.putAll(platformPublishService.collect(sourceUrl, accountId));
-                } catch (IllegalStateException e) {
-                    // 详情接口受限时保留搜索快照，避免真实候选商品在整理环节被直接丢弃。
-                    candidate.put("detailStatus", "SEARCH_FALLBACK");
-                    candidate.put("detailMessage", e.getMessage());
-                    log.warn("商品详情补齐失败，已使用搜索快照继续导入: itemId={}, error={}",
-                            candidate.get("itemId"), e.getMessage());
-                }
-            }
+            if (!(value instanceof Map<?, ?> candidateValue)) continue;
+            Map<String, Object> candidate = CompetitorSnapshots.untrustedCandidate(normalizeMap(candidateValue));
             String itemId = text(candidate.get("itemId"));
-            MerchantResource existing = itemId.isBlank() ? null
-                    : resourceMapper.selectByTenantTypeAndGoodsId(tenantId, "SUPPLY", itemId);
+            if (!itemId.matches("\\d{8,64}")) throw new IllegalArgumentException("商品ID格式无效");
+            MerchantResource existing = resourceMapper.selectByTenantTypeAndGoodsId(tenantId, "SUPPLY", itemId);
+            Map<String, Object> previous = existing == null || !accountId.equals(existing.getXianyuAccountId())
+                    ? new LinkedHashMap<>() : readJson(existing.getDataJson());
+            Map<String, Object> merged = new LinkedHashMap<>(previous);
+            merged.putAll(candidate);
+            // Existing successful facts survive a failed enrichment of a new search card.
+            previous.forEach(merged::put);
+            try {
+                if (batchBlocked != null) throw batchBlocked;
+                Map<String, Object> detail = platformPublishService.competitorDetail(accountId, itemId, false);
+                merged.putAll(detail);
+                merged.put("detailStatus", detail.getOrDefault("detailStatus", "SUCCESS"));
+                merged.remove("detailMessage");
+            } catch (IllegalStateException failure) {
+                merged.put(CompetitorDetailService.SNAPSHOT_KEY, CompetitorDetailService.failedSnapshot(
+                        previous, itemId, failure, Instant.now().toString()));
+                merged.put("detailStatus", "SEARCH_FALLBACK");
+                merged.put("detailMessage", failure.getMessage());
+                if (failure instanceof CompetitorDetailException e && e.isValidationRequired()) batchBlocked = e;
+            }
             MerchantResource supply;
             if (existing == null) {
-                supply = createSupply(candidate, accountId);
+                supply = createSupply(merged, accountId);
             } else {
-                existing.setName(limitName(text(candidate.get("title"))));
-                existing.setDataJson(writeJson(candidate));
+                existing.setName(limitName(text(merged.get("title"))));
+                existing.setXianyuAccountId(accountId);
+                existing.setAmount(decimalValue(merged.get("price"), existing.getAmount()));
+                existing.setDataJson(writeJson(merged));
                 resourceMapper.updateById(existing);
                 supply = existing;
             }
@@ -364,6 +415,8 @@ public class MerchantOperationsService {
         if (amount.compareTo(BigDecimal.ZERO) <= 0) {
             throw new IllegalArgumentException("商品价格必须大于 0");
         }
+        int stock = intValue(request.get("stock"), 0);
+        if (stock < 1) throw new IllegalArgumentException("请填写自己的发布库存");
         String requestKey = text(request.get("requestId"));
         MerchantTask existingTask = requestKey.isBlank() ? null
                 : taskMapper.selectByRequestKey(requireTenantId(), "PUBLISH", requestKey);
@@ -384,7 +437,7 @@ public class MerchantOperationsService {
         materialRequest.setName(name);
         materialRequest.setStatus(1);
         materialRequest.setXianyuAccountId(accountId);
-        materialRequest.setStock(Math.max(0, intValue(request.get("stock"), 1)));
+        materialRequest.setStock(stock);
         materialRequest.setAmount(amount);
         materialRequest.setData(data);
         MerchantResourceRespDTO material = saveResource(materialRequest);
@@ -692,6 +745,18 @@ public class MerchantOperationsService {
                     OperationConstants.Module.MERCHANT_OPERATIONS, task.getTaskType() + "任务执行成功",
                     OperationConstants.Status.SUCCESS, OperationConstants.TargetType.TASK,
                     String.valueOf(task.getId()), task.getRequestJson(), writeJson(result), null, null);
+        } catch (CompetitorDetailException e) {
+            if (e.isValidationRequired()) {
+                String action = PlatformRestrictionGuidance.actionLabel(e.getReason());
+                taskMapper.stopForValidation(task.getId(), trimError(action + "：" + e.getMessage()));
+                operationLogService.log(task.getXianyuAccountId(), OperationConstants.Type.UPDATE,
+                        OperationConstants.Module.RISK_CONTROL, task.getTaskType() + "任务" + action + "，已停止自动重试",
+                        OperationConstants.Status.FAIL, OperationConstants.TargetType.TASK,
+                        String.valueOf(task.getId()), null, null, trimError(e.getMessage()), null);
+            } else {
+                int attempt = task.getAttemptCount() == null ? 1 : task.getAttemptCount() + 1;
+                taskMapper.fail(task.getId(), trimError(e.getMessage()), LocalDateTime.now().plusMinutes(attempt * 5L));
+            }
         } catch (RiskGuardBlockedException e) {
             LocalDateTime retryAt = Instant.ofEpochMilli(e.getRetryAt())
                     .atZone(ZoneId.of("Asia/Shanghai")).toLocalDateTime();
@@ -723,23 +788,18 @@ public class MerchantOperationsService {
         int minStock = intValue(config.get("minStock"), 0);
         int collected = 0;
         if (!keyword.isBlank()) {
+            platformPublishService.assertCollectionAllowed(rule.getXianyuAccountId());
             int searchLimit = Math.max(1, Math.min(intValue(config.get("searchLimit"), 20), 50));
             for (Map<String, Object> candidate : platformPublishService.search(keyword, rule.getXianyuAccountId(), searchLimit)) {
                 String itemId = text(candidate.get("itemId"));
                 if (itemId.isBlank() || resourceMapper.selectByTenantTypeAndGoodsId(task.getTenantId(), "SUPPLY", itemId) != null) {
                     continue;
                 }
-                MerchantResource supply = new MerchantResource();
-                supply.setTenantId(task.getTenantId());
-                supply.setResourceType("SUPPLY");
-                supply.setName(limitName(text(candidate.get("title"))));
-                supply.setStatus(1);
-                supply.setXianyuAccountId(rule.getXianyuAccountId());
-                supply.setXyGoodsId(itemId);
-                supply.setStock(1);
-                supply.setAmount(decimalValue(candidate.get("amount"), BigDecimal.ZERO));
-                supply.setDataJson(writeJson(candidate));
-                resourceMapper.insert(supply);
+                MerchantResource supply = createSupply(CompetitorSnapshots.untrustedCandidate(candidate), rule.getXianyuAccountId());
+                MerchantTask collection = new MerchantTask();
+                collection.setResourceId(supply.getId());
+                collection.setXianyuAccountId(rule.getXianyuAccountId());
+                executeCollect(collection);
                 collected++;
             }
         }
@@ -834,13 +894,18 @@ public class MerchantOperationsService {
                     result.put("count", candidates.size());
                 }
                 case "COLLECT" -> {
+                    platformPublishService.assertCollectionAllowed(accountId);
                     for (Map<String, Object> candidate : candidates) {
                         String itemId = text(candidate.get("itemId"));
                         MerchantResource supply = itemId.isBlank() ? null
                                 : resourceMapper.selectByTenantTypeAndGoodsId(task.getTenantId(), "SUPPLY", itemId);
                         if (supply == null) {
-                            supply = createSupply(candidate, accountId);
+                            supply = createSupply(CompetitorSnapshots.untrustedCandidate(candidate), accountId);
                         }
+                        MerchantTask collection = new MerchantTask();
+                        collection.setResourceId(supply.getId());
+                        collection.setXianyuAccountId(accountId);
+                        executeCollect(collection);
                         supplyIds.add(supply.getId());
                     }
                     result.put("count", supplyIds.size());
@@ -938,43 +1003,34 @@ public class MerchantOperationsService {
 
     private Map<String, Object> executeCollect(MerchantTask task) {
         MerchantResource supply = requireResource(task.getResourceId());
-        Map<String, Object> data = readJson(supply.getDataJson());
-        String sourceUrl = text(data.get("sourceUrl"));
-        if (!sourceUrl.isBlank()) {
-            Map<String, Object> collected = platformPublishService.collect(sourceUrl, supply.getXianyuAccountId());
-            data.putAll(collected);
-            supply.setName(limitName(text(collected.get("title"))));
-            String itemId = text(collected.get("itemId"));
-            if (!itemId.isBlank()) {
-                supply.setXyGoodsId(itemId);
-            }
-            supply.setDataJson(writeJson(data));
+        Map<String, Object> previous = readJson(supply.getDataJson());
+        String itemId = CompetitorSnapshots.itemId(previous.get("sourceUrl"), supply.getXyGoodsId());
+        Long accountId = task.getXianyuAccountId() == null ? supply.getXianyuAccountId() : task.getXianyuAccountId();
+        previous = CompetitorSnapshots.edit(previous, Map.of(), supply.getXianyuAccountId(), accountId,
+                supply.getXyGoodsId(), itemId);
+        supply.setXianyuAccountId(accountId);
+        supply.setXyGoodsId(itemId);
+        try {
+            Map<String, Object> collected = platformPublishService.competitorDetail(accountId, itemId, false);
+            previous.putAll(collected);
+            previous.put("detailStatus", collected.getOrDefault("detailStatus", "SUCCESS"));
+            previous.remove("detailMessage");
+            if (!text(collected.get("title")).isBlank()) supply.setName(limitName(text(collected.get("title"))));
+            supply.setXyGoodsId(itemId);
+            supply.setAmount(decimalValue(collected.get("price"), supply.getAmount()));
+            supply.setDataJson(writeJson(previous));
             resourceMapper.updateById(supply);
-            return Map.of("itemId", supply.getXyGoodsId() == null ? "" : supply.getXyGoodsId(), "name", supply.getName());
+            return Map.of("itemId", itemId, "name", supply.getName(),
+                    CompetitorDetailService.SNAPSHOT_KEY, collected.get(CompetitorDetailService.SNAPSHOT_KEY));
+        } catch (IllegalStateException failure) {
+            previous.put(CompetitorDetailService.SNAPSHOT_KEY, CompetitorDetailService.failedSnapshot(
+                    previous, itemId, failure, Instant.now().toString()));
+            previous.put("detailStatus", "SEARCH_FALLBACK");
+            previous.put("detailMessage", failure.getMessage());
+            supply.setDataJson(writeJson(previous));
+            resourceMapper.updateById(supply);
+            throw failure;
         }
-        if (supply.getXianyuAccountId() == null || supply.getXyGoodsId() == null) {
-            throw new IllegalArgumentException("采集货源需填写来源地址，或关联账号和商品ID");
-        }
-        ItemDetailReqDTO request = new ItemDetailReqDTO();
-        request.setXyGoodId(supply.getXyGoodsId());
-        request.setCookieId(String.valueOf(supply.getXianyuAccountId()));
-        ResultObject<ItemDetailRespDTO> result = itemService.getItemDetail(request);
-        if (result.getCode() != 200 || result.getData() == null || result.getData().getItemWithConfig() == null) {
-            throw new IllegalStateException(result.getMsg());
-        }
-        ItemWithConfigDTO itemWithConfig = result.getData().getItemWithConfig();
-        XianyuGoodsInfo item = itemWithConfig.getItem();
-        data.put("title", item.getTitle());
-        data.put("description", item.getDetailInfo());
-        data.put("images", collectImages(item));
-        data.put("detailUrl", item.getDetailUrl());
-        supply.setName(limitName(item.getTitle() == null ? "" : item.getTitle().trim()));
-        supply.setDataJson(writeJson(data));
-        if (item.getSoldPrice() != null) {
-            supply.setAmount(decimalValue(item.getSoldPrice(), supply.getAmount()));
-        }
-        resourceMapper.updateById(supply);
-        return Map.of("itemId", supply.getXyGoodsId(), "name", supply.getName());
     }
 
     private Map<String, Object> executeCompensation(MerchantTask task) {
@@ -1134,8 +1190,12 @@ public class MerchantOperationsService {
         material.setName(supply.getName());
         material.setStatus(1);
         material.setXianyuAccountId(supply.getXianyuAccountId());
-        material.setStock(supply.getStock());
-        material.setAmount(supply.getAmount());
+        material.setStock(0);
+        material.setAmount(BigDecimal.ZERO);
+        data.remove("price");
+        data.remove("amount");
+        data.remove("stock");
+        data.put("requiresManualPricing", true);
         material.setDataJson(writeJson(data));
         resourceMapper.insert(material);
         return material;
@@ -1220,13 +1280,16 @@ public class MerchantOperationsService {
     }
 
     private void validateOwnedAccount(Long accountId) {
-        if (accountId != null && accountMapper.selectById(accountId) == null) {
-            throw new IllegalArgumentException("账号不存在或无权访问");
+        if (accountId != null) {
+            XianyuAccount account = accountMapper.selectById(accountId);
+            if (account == null || !java.util.Objects.equals(TenantContext.get(), account.getTenantId())) {
+                throw new IllegalArgumentException("账号不存在或无权访问");
+            }
         }
     }
 
     private Long requireTenantId() {
-        Long tenantId = UserContext.getUserId();
+        Long tenantId = TenantContext.get();
         if (tenantId == null) {
             throw new IllegalStateException("缺少租户上下文");
         }

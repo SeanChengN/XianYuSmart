@@ -100,6 +100,13 @@ public class XianyuApiCallUtils {
                                            Map<String, String> extraQueryParams,
                                            int retryCount) {
         try {
+            if (isCompetitorRead(apiName)) {
+                RiskControlService.GuardStatus status = riskControlService.getStatus(accountId);
+                if (status.state() == RiskControlService.GuardState.CIRCUIT_OPEN) {
+                    return ApiCallResult.platformRestricted(null,
+                            PlatformRestrictionGuidance.message(status.reason(), status.remainingSeconds()), status.reason());
+                }
+            }
             RiskControlService.GuardDecision guard = riskControlService.checkApiWrite(accountId, apiName);
             if (!guard.allowed()) {
                 log.warn("【账号{}】平台写请求等待恢复: apiName={}, remainingSeconds={}",
@@ -139,7 +146,16 @@ public class XianyuApiCallUtils {
 
             String retCode = ret.get(0);
 
-            // 4. 检查是否成功
+            // Validation signals take priority over success and token refresh.
+            if (riskControlService.detectRiskControl(responseMap)) {
+                RiskControlService.GuardStatus status = riskControlService.getStatus(accountId);
+                log.warn("【账号{}】平台请求受限: apiName={}, version={}, reason={}",
+                        accountId, apiName, apiPathVersion, status.reason());
+                String message = isCompetitorRead(apiName)
+                        ? PlatformRestrictionGuidance.message(status.reason(), status.remainingSeconds())
+                        : platformRestrictionMessage(retCode);
+                return ApiCallResult.platformRestricted(response, message, status.reason());
+            }
             if (retCode.contains("SUCCESS")) {
                 log.info("【账号{}】API调用成功: {}", accountId, apiName);
                 return new ApiCallResult(true, response, null, false);
@@ -163,7 +179,7 @@ public class XianyuApiCallUtils {
                     log.info("【账号{}】Cookie刷新成功，准备重试API调用...", accountId);
 
                     // 等待一小段时间
-                    Thread.sleep(RETRY_INTERVAL);
+                    Thread.sleep(isCompetitorRead(apiName) ? 3000 : RETRY_INTERVAL);
 
                     // 获取新的Cookie
                     String newCookieStr = accountService.getCookieByAccountId(accountId);
@@ -179,12 +195,6 @@ public class XianyuApiCallUtils {
                 }
 
                 return new ApiCallResult(false, response, "令牌过期，自动刷新失败", true);
-            }
-
-            // 6. 检查是否触发风控
-            if (riskControlService.detectRiskControl(responseMap)) {
-                log.error("【账号{}】触发风控: {}", accountId, retCode);
-                return new ApiCallResult(false, response, platformRestrictionMessage(retCode), false);
             }
 
             // 7. 其他错误
@@ -282,6 +292,11 @@ public class XianyuApiCallUtils {
                retCode.contains("令牌过期");
     }
     
+    private boolean isCompetitorRead(String apiName) {
+        return "mtop.taobao.idle.pc.detail".equals(apiName)
+                || "mtop.taobao.idle.trade.order.render".equals(apiName);
+    }
+
     private String platformRestrictionMessage(String retCode) {
         if (retCode.contains("FAIL_SYS_USER_VALIDATE")) {
             return "平台要求完成账号验证，搜索结果仍可继续整理；发布前请在连接管理更新登录状态后重试";
@@ -303,6 +318,8 @@ public class XianyuApiCallUtils {
         private final RiskControlService.GuardState guardState;
         private final long remainingSeconds;
         private final long retryAt;
+        private String riskReason;
+        private boolean platformRestricted;
         
         public ApiCallResult(boolean success, String response, String errorMessage, boolean tokenExpired) {
             this(success, response, errorMessage, tokenExpired, null, 0, 0);
@@ -327,6 +344,16 @@ public class XianyuApiCallUtils {
                     guard.state(), guard.remainingSeconds(), guard.retryAt());
         }
         
+        public static ApiCallResult platformRestricted(String response, String message, String reason) {
+            ApiCallResult result = new ApiCallResult(false, response, message, false);
+            result.platformRestricted = true;
+            result.riskReason = reason;
+            return result;
+        }
+
+        public boolean isPlatformRestricted() { return platformRestricted; }
+        public String getRiskReason() { return riskReason; }
+
         public boolean isSuccess() {
             return success;
         }

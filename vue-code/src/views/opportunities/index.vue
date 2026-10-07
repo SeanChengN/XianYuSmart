@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { getAccountList } from '@/api/account'
 import { createPublishPlan, crawlShopOpportunities, generateOpportunityImage, importOpportunities, polishOpportunity, searchOpportunities, type OpportunityCandidate } from '@/api/merchant'
 import PublishAddressFields from '@/components/PublishAddressFields.vue'
@@ -7,6 +7,8 @@ import type { PublishAddress } from '@/data/publish-address'
 import type { Account } from '@/types'
 import { toast } from '@/utils/toast'
 import '@/styles/merchant-workbench.css'
+import CompetitorSkuPanel from '@/components/CompetitorSkuPanel.vue'
+import { displayPriceCents, formatMoneyCents } from '@/utils/competitor-price'
 
 const accounts = ref<Account[]>([])
 const accountId = ref<number>()
@@ -27,8 +29,8 @@ const total = ref(0)
 const draft = reactive({
   name: '',
   description: '',
-  amount: 0,
-  stock: 1,
+  amount: '' as number | '',
+  stock: '' as number | '',
   category: '虚拟商品',
   province: '北京市',
   city: '北京市',
@@ -61,7 +63,14 @@ const loadAccounts = async () => {
   accountId.value ||= accounts.value[0]?.id
 }
 
+let searchGeneration = 0
+let captureGeneration = 0
+const capturing = ref(false)
+
 const resetResults = () => {
+  searchGeneration++
+  captureGeneration++
+  capturing.value = false
   results.value = []
   selectedIds.value = []
   active.value = undefined
@@ -71,10 +80,21 @@ const resetResults = () => {
   total.value = 0
 }
 
+watch(accountId, () => {
+  resetResults()
+  loading.value = false
+  loadingMore.value = false
+  step.value = 1
+  maxStep.value = 1
+  draft.amount = ''
+  draft.stock = ''
+})
+
 const search = async (append = false) => {
   if (sourceMode.value === 'keyword' && !keyword.value.trim()) return toast.error('请输入商品关键词')
   if (sourceMode.value === 'shop' && !shopUrl.value.trim()) return toast.error('请输入闲鱼店铺链接')
   if (!accountId.value) return toast.error('请选择搜索账号')
+  const current = ++searchGeneration
   if (append) loadingMore.value = true
   else loading.value = true
   try {
@@ -83,6 +103,7 @@ const search = async (append = false) => {
     const response = sourceMode.value === 'keyword'
       ? await searchOpportunities({ ...common, keyword: keyword.value })
       : await crawlShopOpportunities({ ...common, shopUrl: shopUrl.value })
+    if (current !== searchGeneration) return
     const page = response.data
     const pageItems = page?.items || []
     results.value = append
@@ -97,8 +118,10 @@ const search = async (append = false) => {
       active.value = results.value[0]
     }
   } finally {
-    loading.value = false
-    loadingMore.value = false
+    if (current === searchGeneration) {
+      loading.value = false
+      loadingMore.value = false
+    }
   }
 }
 
@@ -110,25 +133,36 @@ const toggle = (item: OpportunityCandidate) => {
 }
 
 const capture = async () => {
+  if (capturing.value || !accountId.value) return
   if (!selectedCandidates.value.length) return toast.error('至少选择一个候选商品')
-  const response = await importOpportunities({ candidates: selectedCandidates.value, xianyuAccountId: accountId.value })
-  const item = selectedCandidates.value[0]!
-  const collected: Record<string, any> = response.data?.[0]?.data || item
-  active.value = item
-  draft.name = String(collected.title || item.title)
-  draft.description = String(collected.description || collected.title || item.title)
-  draft.amount = Number(collected.price || item.price || 0)
-  draft.images = collected.images || item.images || []
-  if (collected.detailStatus === 'SEARCH_FALLBACK') {
-    toast.warning('平台详情暂时受限，已保留真实搜索结果继续整理；发布前请在连接管理确认登录状态')
+  const candidates = [...selectedCandidates.value]
+  const item = candidates[0]!
+  const current = ++captureGeneration
+  capturing.value = true
+  try {
+    const response = await importOpportunities({ candidates, xianyuAccountId: accountId.value })
+    if (current !== captureGeneration) return
+    const collected: Record<string, any> = response.data?.[0]?.data || item
+    item.competitorSnapshot = collected.competitorSnapshot
+    active.value = item
+    draft.name = String(collected.title || item.title)
+    draft.description = String(collected.description || collected.title || item.title)
+    draft.amount = ''
+    draft.stock = ''
+    draft.images = collected.images || item.images || []
+    if (collected.detailStatus === 'SEARCH_FALLBACK') {
+      toast.warning('本次详情获取失败，已保留已有资料；请查看规格状态，平台验证完成后手动刷新')
+    }
+    step.value = 2
+    maxStep.value = 2
+  } finally {
+    if (current === captureGeneration) capturing.value = false
   }
-  step.value = 2
-  maxStep.value = 2
 }
 
 const next = () => {
   if (step.value === 2 && (!draft.name.trim() || !draft.description.trim())) return toast.error('标题和详情不能为空')
-  if (step.value === 3 && (!draft.amount || !draft.images.length || !draft.divisionId || !draft.gps)) return toast.error('请补充价格、图片和完整发布位置')
+  if (step.value === 3 && (!(Number(draft.amount) > 0) || !Number.isInteger(Number(draft.stock)) || Number(draft.stock) < 1 || !draft.images.length || !draft.divisionId || !draft.gps)) return toast.error('请填写自己的售价、正整数库存、图片和完整发布位置')
   step.value = Math.min(4, step.value + 1)
   maxStep.value = Math.max(maxStep.value, step.value)
 }
@@ -139,9 +173,10 @@ const goStep = (target: number) => {
 
 const publish = async (dryRun = false) => {
   if (!accountId.value) return toast.error('请选择发布账号')
+  if (!(Number(draft.amount) > 0) || !Number.isInteger(Number(draft.stock)) || Number(draft.stock) < 1) return toast.error('请确认自己的售价和库存')
   loading.value = true
   try {
-    const response = await createPublishPlan({ xianyuAccountId: accountId.value, ...draft, dryRun })
+    const response = await createPublishPlan({ xianyuAccountId: accountId.value, ...draft, amount: Number(draft.amount), stock: Number(draft.stock), dryRun })
     if (response.data?.valid === false) {
       return toast.error(String(response.data.error || '商品发布失败'))
     }
@@ -229,7 +264,7 @@ onMounted(loadAccounts)
                 <span class="workbench__tag">{{ item.matchReason }}</span>
               </div>
             </div>
-            <strong>¥ {{ item.price || '--' }}</strong>
+            <strong>¥ {{ formatMoneyCents(displayPriceCents(item.price)) }}<small>搜索展示价</small></strong>
           </article>
           <div v-if="!results.length" class="workbench__empty">{{ searched ? '平台未返回可用商品，请检查输入内容、账号状态或平台验证。' : '选择商品搜索或店铺采集后开始发现候选商品。' }}</div>
           <button v-if="hasMore" class="workbench__btn opportunity__more" :disabled="loadingMore" @click="search(true)">{{ loadingMore ? '加载中' : '加载更多平台商品' }}</button>
@@ -239,15 +274,20 @@ onMounted(loadAccounts)
         <template v-if="active">
           <img :src="active.images?.[0]" alt="">
           <h2>{{ active.title }}</h2>
-          <strong>¥ {{ active.price || '--' }}</strong>
+          <strong>搜索展示价 ¥ {{ formatMoneyCents(displayPriceCents(active.price)) }}</strong>
           <p>{{ active.matchReason }}</p>
+          <CompetitorSkuPanel :item-id="active.itemId" :account-id="accountId" :initial-snapshot="active.competitorSnapshot"
+            @loaded="detail => { if (active?.itemId === detail.itemId) active.competitorSnapshot = detail.competitorSnapshot }" />
         </template>
         <div v-else class="workbench__empty">选择商品后查看预览</div>
-        <button class="workbench__btn workbench__btn--primary" :disabled="!selectedIds.length" @click="capture">下一步：整理商品</button>
+        <button class="workbench__btn workbench__btn--primary" :disabled="!selectedIds.length || capturing" @click="capture">{{ capturing ? '采集中…' : '下一步：整理商品' }}</button>
       </aside>
     </div>
 
     <div v-else class="workbench__card opportunity__wizard workbench__section">
+      <p class="opportunity__sku-note">竞品规格仅供参考。本次发布为单规格，请填写自己的售价和库存。</p>
+      <CompetitorSkuPanel v-if="active" :item-id="active.itemId" :account-id="accountId" :initial-snapshot="active.competitorSnapshot"
+        @loaded="detail => { if (active?.itemId === detail.itemId) active.competitorSnapshot = detail.competitorSnapshot }" />
       <template v-if="step === 2">
         <div class="opportunity__title-row">
           <h2>整理商品内容</h2>
@@ -281,7 +321,7 @@ onMounted(loadAccounts)
         <h2>发布前确认</h2>
         <div class="opportunity__summary">
           <img :src="draft.images[0]" alt="">
-          <div><h3>{{ draft.name }}</h3><p>{{ draft.description }}</p><strong>¥ {{ draft.amount }} · 库存 {{ draft.stock }}</strong><small>{{ draft.province }} {{ draft.city }} {{ draft.district }} · {{ draft.deliveryMethod }}</small></div>
+          <div><h3>{{ draft.name }}</h3><p>{{ draft.description }}</p><strong>¥ {{ formatMoneyCents(displayPriceCents(draft.amount === '' ? undefined : draft.amount)) }} · 库存 {{ draft.stock }}</strong><small>{{ draft.province }} {{ draft.city }} {{ draft.district }} · {{ draft.deliveryMethod }}</small></div>
         </div>
       </template>
       <div class="workbench__actions opportunity__footer">

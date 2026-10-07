@@ -110,6 +110,15 @@ public class MerchantOperationsController {
         }
     }
 
+    @PostMapping("/opportunities/detail")
+    public ResultObject<Map<String, Object>> competitorDetail(@RequestBody Map<String, Object> request) {
+        try {
+            return ResultObject.success(operationsService.getCompetitorDetail(request));
+        } catch (Exception e) {
+            return ResultObject.failed(e.getMessage());
+        }
+    }
+
     @PostMapping("/opportunities/seller-profile")
     public ResultObject<Map<String, Object>> getSellerPublicProfile(@RequestBody Map<String, Object> request) {
         try {

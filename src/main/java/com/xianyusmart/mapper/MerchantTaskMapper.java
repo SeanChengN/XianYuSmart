@@ -51,7 +51,11 @@ public interface MerchantTaskMapper extends BaseMapper<MerchantTask> {
     int fail(@Param("id") Long id, @Param("errorMessage") String errorMessage,
              @Param("nextRetryTime") LocalDateTime nextRetryTime);
 
-    @Update("UPDATE merchant_task SET status = 0, attempt_count = 0, scheduled_time = NOW(3), next_retry_time = NULL, error_message = NULL WHERE id = #{id}")
+    @Update("UPDATE merchant_task SET status = -1, max_attempts = attempt_count, " +
+            "error_message = #{message}, next_retry_time = NULL WHERE id = #{id}")
+    int stopForValidation(@Param("id") Long id, @Param("message") String message);
+
+    @Update("UPDATE merchant_task SET status = 0, attempt_count = 0, max_attempts = CASE WHEN task_type = 'PUBLISH' THEN 1 WHEN task_type IN ('BARGAIN_FREE_SHIPPING','CONFIRM_SHIPMENT') THEN 12 ELSE 3 END, scheduled_time = NOW(3), next_retry_time = NULL, error_message = NULL WHERE id = #{id}")
     int requeue(@Param("id") Long id);
 
     @Update("UPDATE merchant_task SET status = 0, attempt_count = GREATEST(attempt_count - 1, 0), " +

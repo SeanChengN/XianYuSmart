@@ -74,6 +74,8 @@ class PlatformMarketplaceParser {
             item.put("title", title.isBlank() ? "商品 " + itemId : title);
             item.put("sourceUrl", "https://www.goofish.com/item?id=" + itemId);
             item.put("price", price);
+            item.put("displayPrice", price);
+            item.put("priceSource", "SEARCH_DISPLAY");
             item.put("images", image.isBlank() ? List.of() : List.of(https(image)));
             item.put("sellerNick", firstNonBlank(
                     firstText(detailParams, "userNick", "userNickName", "nickname"),
@@ -139,6 +141,8 @@ class PlatformMarketplaceParser {
                     firstText(priceInfo, "price", "value"),
                     firstText(detailParams, "soldPrice"),
                     firstText(cardData, "price", "soldPrice")));
+            item.put("displayPrice", item.get("price"));
+            item.put("priceSource", "SEARCH_DISPLAY");
             item.put("images", image.isBlank() ? List.of() : List.of(https(image)));
             result.add(item);
             if (result.size() >= limit) {
