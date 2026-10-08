@@ -8,6 +8,7 @@ import type { Account } from '@/types'
 import { toast } from '@/utils/toast'
 import '@/styles/merchant-workbench.css'
 import CompetitorSkuPanel from '@/components/CompetitorSkuPanel.vue'
+import ProductImage from '@/components/ProductImage.vue'
 import { displayPriceCents, formatMoneyCents } from '@/utils/competitor-price'
 import ProductReferenceStats from '@/components/ProductReferenceStats.vue'
 import { searchCache, type SearchResultState } from '@/utils/search-cache'
@@ -363,7 +364,7 @@ onMounted(loadAccounts)
         <div class="workbench__list workbench__section">
           <article v-for="item in filteredResults" :key="item.itemId" class="workbench__item opportunity__result" :class="{ 'opportunity__result--active': active?.itemId === item.itemId }" tabindex="0" @click="toggle(item)" @keydown.enter="toggle(item)">
             <input type="checkbox" :checked="selectedIds.includes(item.itemId)" @click.stop="toggle(item)">
-            <img :src="item.images?.[0]" alt="">
+            <ProductImage :images="item.images" :item-id="item.itemId" :title="item.title" />
             <div class="opportunity__result-copy">
               <h3>{{ item.title }}</h3>
               <div class="workbench__tags">
@@ -381,7 +382,7 @@ onMounted(loadAccounts)
       </div>
       <aside class="workbench__card opportunity__preview">
         <template v-if="active">
-          <img :src="active.images?.[0]" alt="">
+          <ProductImage :images="active.images" :item-id="active.itemId" :title="active.title" />
           <h2>{{ active.title }}</h2>
           <strong>搜索展示价 ¥ {{ formatMoneyCents(displayPriceCents(active.price)) }}</strong>
           <p>{{ active.matchReason }}</p>
@@ -411,7 +412,7 @@ onMounted(loadAccounts)
         <label class="workbench__field">商品详情<textarea v-model="draft.description" class="workbench__textarea" maxlength="3000"></textarea><small>{{ draft.description.length }} / 3000</small></label>
         <div class="opportunity__images">
           <article v-for="(image, index) in draft.images" :key="image">
-            <img :src="image" alt="">
+            <ProductImage :images="draft.images" :initial-index="index" :item-id="active?.itemId" :title="draft.name" />
             <button type="button" @click="draft.images.splice(index, 1)">移除</button>
           </article>
           <div v-if="!draft.images.length" class="workbench__empty">暂无商品图，可保留采集图片或使用 AI 生成。</div>
@@ -431,7 +432,7 @@ onMounted(loadAccounts)
       <template v-else>
         <h2>发布前确认</h2>
         <div class="opportunity__summary">
-          <img :src="draft.images[0]" alt="">
+          <ProductImage :images="draft.images" :item-id="active?.itemId" :title="draft.name" />
           <div><h3>{{ draft.name }}</h3><p>{{ draft.description }}</p><strong>¥ {{ formatMoneyCents(displayPriceCents(draft.amount === '' ? undefined : draft.amount)) }} · 库存 {{ draft.stock }}</strong><small>{{ draft.province }} {{ draft.city }} {{ draft.district }} · {{ draft.deliveryMethod }}</small></div>
         </div>
       </template>
@@ -463,7 +464,7 @@ onMounted(loadAccounts)
 .opportunity__result > strong { white-space: nowrap; }
 .opportunity__result--active { border-color: #84adff; background: #f5f8ff; }
 .opportunity__preview { position: sticky; top: 16px; align-self: start; }
-.opportunity__preview > img { width: 100%; aspect-ratio: 4 / 3; border-radius: 8px; object-fit: cover; }
+.opportunity__preview > .product-image { width: 100%; height: auto; aspect-ratio: 4 / 3; border-radius: 8px; object-fit: cover; }
 .opportunity__preview h2 { display: -webkit-box; overflow: hidden; font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
 .opportunity__preview > strong { color: #d92d20; font-size: 22px; }
 .opportunity__preview > p { color: #667085; font-size: 12px; }
@@ -474,21 +475,21 @@ onMounted(loadAccounts)
 .opportunity__title-row { display: flex; align-items: center; justify-content: space-between; }
 .opportunity__images { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; margin-top: 14px; }
 .opportunity__images article { overflow: hidden; border: 1px solid #e4e7ec; border-radius: 8px; background: #fff; }
-.opportunity__images img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; }
-.opportunity__images button { width: 100%; border: 0; border-top: 1px solid #e4e7ec; padding: 7px; color: #b42318; background: #fff; cursor: pointer; }
+.opportunity__images .product-image { display: block; width: 100%; height: auto; aspect-ratio: 1; object-fit: cover; }
+.opportunity__images article > button { width: 100%; border: 0; border-top: 1px solid #e4e7ec; padding: 7px; color: #b42318; background: #fff; cursor: pointer; }
 .opportunity__wizard > .workbench__field { margin-bottom: 14px; }
 .opportunity__footer { justify-content: flex-end; margin-top: 18px; }
 .opportunity__summary { display: grid; grid-template-columns: 180px 1fr; gap: 18px; }
-.opportunity__summary img { width: 180px; height: 180px; border-radius: 8px; object-fit: cover; background: #f2f4f7; }
+.opportunity__summary .product-image { width: 180px; height: 180px; border-radius: 8px; object-fit: cover; background: #f2f4f7; }
 .opportunity__summary p { color: #667085; white-space: pre-wrap; }
 .opportunity__summary strong, .opportunity__summary small { display: block; margin-top: 10px; }
 @media (max-width: 900px) { .opportunity__layout { grid-template-columns: 1fr; } .opportunity__preview { position: static; } }
 @media (max-width: 767px) {
   .opportunity__result { grid-template-columns: auto 52px minmax(0, 1fr); align-items: start; }
-  .opportunity__result img { width: 52px; height: 52px; }
+  .opportunity__result .product-image { width: 52px; height: 52px; }
   .opportunity__result > strong { grid-column: 3; }
   .opportunity__summary { grid-template-columns: 1fr; }
-  .opportunity__summary img { width: 100%; height: auto; aspect-ratio: 1; }
+  .opportunity__summary .product-image { width: 100%; height: auto; aspect-ratio: 1; }
   .opportunity__preview { padding-bottom: max(16px, env(safe-area-inset-bottom)); }
 }
 </style>

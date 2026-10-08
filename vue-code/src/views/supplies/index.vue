@@ -6,6 +6,7 @@ import type { Account } from '@/types'
 import { toast } from '@/utils/toast'
 import '@/styles/merchant-workbench.css'
 import CompetitorSkuPanel from '@/components/CompetitorSkuPanel.vue'
+import ProductImage from '@/components/ProductImage.vue'
 import ProductReferenceStats from '@/components/ProductReferenceStats.vue'
 import { displayPriceCents, formatMoneyCents } from '@/utils/competitor-price'
 import type { CompetitorDetail, CompetitorSkuSnapshot } from '@/api/merchant'
@@ -125,7 +126,7 @@ onMounted(load)
     </div>
     <div class="workbench__list workbench__section">
       <article v-for="item in filtered" :key="item.id" class="workbench__item">
-        <img :src="item.data?.images?.[0]" alt="">
+        <ProductImage :images="item.data?.images" :item-id="item.xyGoodsId" :title="item.name" />
         <div>
           <h3>{{ item.name }}</h3>
           <div class="workbench__tags">

@@ -12,6 +12,7 @@ import type { Account } from '@/types'
 import { toast } from '@/utils/toast'
 import '@/styles/merchant-workbench.css'
 import CompetitorSkuPanel from '@/components/CompetitorSkuPanel.vue'
+import ProductImage from '@/components/ProductImage.vue'
 import { displayPriceCents, displayPriceSummary, formatMoneyCents } from '@/utils/competitor-price'
 import ProductReferenceStats from '@/components/ProductReferenceStats.vue'
 import { searchCache, type SearchResultState } from '@/utils/search-cache'
@@ -281,7 +282,7 @@ onMounted(loadAccounts)
 
     <div class="comparison__list workbench__section">
       <article v-for="item in filteredResults" :key="item.itemId" class="workbench__card comparison__item">
-        <img v-if="item.images?.[0]" :src="item.images[0]" alt="">
+        <ProductImage v-if="item.images?.[0]" :images="item.images" :item-id="item.itemId" :title="item.title" />
         <div v-else class="comparison__image-empty">暂无图片</div>
         <div class="comparison__content">
           <h2>{{ item.title }}</h2>
@@ -359,7 +360,7 @@ onMounted(loadAccounts)
 .comparison__metrics strong { display: block; margin: 7px 0 3px; font-size: 22px; }
 .comparison__list { display: flex; flex-direction: column; gap: 10px; }
 .comparison__item { display: grid; grid-template-columns: 92px minmax(0, 1fr) 130px; align-items: center; gap: 14px; }
-.comparison__item > img, .comparison__image-empty { width: 92px; height: 92px; border-radius: 8px; object-fit: cover; background: #f2f4f7; }
+.comparison__item > .product-image, .comparison__image-empty { width: 92px; height: 92px; border-radius: 8px; object-fit: cover; background: #f2f4f7; }
 .comparison__image-empty { display: grid; place-items: center; color: #98a2b3; font-size: 11px; }
 .comparison__content { min-width: 0; }
 .comparison__content h2 { margin: 0 0 9px; overflow: hidden; font-size: 15px; line-height: 1.5; text-overflow: ellipsis; white-space: nowrap; }
@@ -390,7 +391,7 @@ onMounted(loadAccounts)
 @media (max-width: 767px) {
   .comparison__search, .comparison__filters, .comparison__metrics { grid-template-columns: 1fr; }
   .comparison__item { grid-template-columns: 72px minmax(0, 1fr); align-items: start; }
-  .comparison__item > img, .comparison__image-empty { width: 72px; height: 72px; }
+  .comparison__item > .product-image, .comparison__image-empty { width: 72px; height: 72px; }
   .comparison__content h2 { display: -webkit-box; white-space: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
   .comparison__action { grid-column: 1 / -1; align-items: stretch; flex-direction: column; }
   .comparison__action > strong { text-align: left; }

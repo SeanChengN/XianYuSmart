@@ -29,7 +29,7 @@ public class SystemController {
 
     private static final String MENU_LAYOUT_SETTING_KEY = "menu_layout";
 
-    @Value("${app.version:2.1.0}")
+    @Value("${app.version:2.1.1}")
     private String currentVersion;
 
     @Autowired
