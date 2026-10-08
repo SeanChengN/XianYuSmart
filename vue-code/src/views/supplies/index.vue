@@ -6,6 +6,7 @@ import type { Account } from '@/types'
 import { toast } from '@/utils/toast'
 import '@/styles/merchant-workbench.css'
 import CompetitorSkuPanel from '@/components/CompetitorSkuPanel.vue'
+import ProductReferenceStats from '@/components/ProductReferenceStats.vue'
 import { displayPriceCents, formatMoneyCents } from '@/utils/competitor-price'
 import type { CompetitorDetail, CompetitorSkuSnapshot } from '@/api/merchant'
 
@@ -133,6 +134,7 @@ onMounted(load)
             <span class="workbench__tag" :class="{ 'workbench__tag--good': item.data?.images?.length }">{{ item.data?.images?.length ? `${item.data.images.length} 张图` : '待补图片' }}</span>
             <span v-if="item.xyGoodsId" class="workbench__tag">ID {{ item.xyGoodsId }}</span>
           </div>
+          <ProductReferenceStats :sold-count-text="item.data?.soldCountText" :want-count-text="item.data?.wantCountText" />
         </div>
         <div class="workbench__actions">
           <button class="workbench__btn" @click="selectedSupply = item">查看规格</button>
